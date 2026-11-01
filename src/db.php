@@ -54,10 +54,6 @@ function db(): PDO
             kind       TEXT,
             notiz      TEXT
         );
-        CREATE TABLE IF NOT EXISTS konto_typen (
-            konto TEXT PRIMARY KEY,
-            typ   TEXT NOT NULL DEFAULT 'alltag'
-        );
         CREATE TABLE IF NOT EXISTS recurring_notes (
             schluessel TEXT PRIMARY KEY,
             notiz      TEXT
@@ -123,26 +119,6 @@ function tx_hash(string $konto, string $datum, float $betrag, string $empf, stri
         mb_strtolower(trim($btext)),
     ]);
     return hash('sha256', $raw);
-}
-
-const KONTO_TYPEN = ['alltag' => 'Alltag', 'spar' => 'Sparkonto'];
-
-/** Konten, deren Überträge als „Gespart“ zählen (Tagesgeld, Depot …). */
-function spar_konten(): array
-{
-    return array_column(db_all("SELECT konto FROM konto_typen WHERE typ = 'spar' ORDER BY konto"), 'konto');
-}
-
-function set_konto_typ(string $konto, string $typ): void
-{
-    if (!isset(KONTO_TYPEN[$typ])) {
-        throw new RuntimeException('Unbekannter Kontotyp.');
-    }
-    if (!in_array($konto, konten(), true)) {
-        throw new RuntimeException('Konto nicht gefunden.');
-    }
-    db_exec('INSERT INTO konto_typen (konto, typ) VALUES (?, ?)
-             ON CONFLICT(konto) DO UPDATE SET typ = excluded.typ', [$konto, $typ]);
 }
 
 function konten(): array

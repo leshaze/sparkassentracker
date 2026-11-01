@@ -35,23 +35,11 @@
         <?php else: ?>
             <div class="table-scroll">
             <table>
-                <thead><tr><th>Konto</th><th>Typ</th><th class="num">Umsätze</th><th>Zeitraum</th><th class="num">Überträge</th><th></th></tr></thead>
+                <thead><tr><th>Konto</th><th class="num">Umsätze</th><th>Zeitraum</th><th class="num">Überträge</th><th></th></tr></thead>
                 <tbody>
                 <?php foreach ($konten as $k): ?>
                     <tr>
                         <td><span class="konto-tag"><?= h($k['konto']) ?></span></td>
-                        <td>
-                            <form method="post" data-autosubmit class="inline-form">
-                                <?= form_fields('konto_typ') ?>
-                                <input type="hidden" name="konto" value="<?= h($k['konto']) ?>">
-                                <select name="typ" aria-label="Kontotyp von <?= h($k['konto']) ?>">
-                                    <?php foreach (KONTO_TYPEN as $tk => $tl): ?>
-                                        <option value="<?= h($tk) ?>" <?= $k['typ'] === $tk ? 'selected' : '' ?>><?= h($tl) ?></option>
-                                    <?php endforeach; ?>
-                                </select>
-                                <noscript><button class="btn small" type="submit">OK</button></noscript>
-                            </form>
-                        </td>
                         <td class="num"><?= number_format((int) $k['n'], 0, ',', '.') ?></td>
                         <td class="nowrap small"><?= h(fmt_date($k['von'])) ?> – <?= h(fmt_date($k['bis'])) ?></td>
                         <td class="num"><?= (int) $k['ue'] ?></td>
@@ -72,11 +60,6 @@
                 <button class="btn small" type="submit">Überträge jetzt erkennen</button>
                 <span class="muted small">läuft nach jedem Import automatisch (Fenster <?= (int) cfg('transfer_max_days') ?> Tage)</span>
             </form>
-            <p class="muted small">
-                <strong>Kontotyp:</strong> Überträge zwischen <em>Alltag</em>-Konten (z.&nbsp;B. Giro → Kreditkarte)
-                heben sich auf. Überträge auf ein <em>Sparkonto</em> (Tagesgeld, Depot) erscheinen in der
-                Übersicht als „Gespart“, Entnahmen verringern den Wert.
-            </p>
         <?php endif; ?>
     </section>
 </div>

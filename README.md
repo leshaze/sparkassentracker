@@ -41,25 +41,24 @@ php8.4 -m | grep -iE 'pdo_sqlite|mbstring'
 
 ## Installation
 
-Dateien nach `/var/www/sparkassentracker` legen (dieser Pfad steht in der nginx-Konfiguration):
+Code per Git nach `/var/www/sparkassentracker` holen (dieser Pfad steht in der
+nginx-Konfiguration). Der Code gehört dem normalen Benutzer (hier `pi`), damit
+Updates ohne `sudo` per `git pull` gehen. Ist das Repository privat, auf dem Pi einen
+SSH-Schlüssel anlegen und bei GitHub als *Deploy Key* (nur lesen) hinterlegen.
 
 ```bash
 sudo mkdir -p /var/www/sparkassentracker
 ```
 
 ```bash
-sudo tar -xzf sparkassentracker.tar.gz -C /var/www/sparkassentracker --strip-components=1
-```
-
-Der Ordner `data/` muss für PHP-FPM (`www-data`) schreibbar sein, für alle anderen nicht lesbar:
-
-```bash
-sudo chown -R www-data:www-data /var/www/sparkassentracker/data
+sudo chown pi:pi /var/www/sparkassentracker
 ```
 
 ```bash
-sudo chmod 770 /var/www/sparkassentracker/data
+git clone git@github.com:leshaze/sparkassentracker.git /var/www/sparkassentracker
 ```
+
+Danach die Dateirechte setzen wie im Abschnitt [Dateirechte](#dateirechte) beschrieben.
 
 ### nginx-Konfiguration
 
@@ -116,21 +115,101 @@ PHP-Server als systemd-Dienst (`sparkassentracker.service`). Diese Varianten nut
 `http://recordloom.local/tracker/` öffnen (bzw. `http://<pi-ip>/tracker/`) →
 Passwort festlegen → CSVs importieren.
 
-- Bestehende Regeln: `categories.json` der Desktop-App unter *Kategorien* hochladen
-  (oder nach `data/categories.json` kopieren).
+- Bestehende Regeln: `categories.json` der Desktop-App unter *Kategorien* hochladen.
 - Bestehende Datenbank: Das Schema entspricht der Desktop-`transactions.db`; eine
-  Kopie nach `data/transactions.db` sollte direkt funktionieren (fehlende Spalten
-  werden ergänzt). Vorher eine Sicherung anlegen. Alternativ einfach die CSVs neu
-  importieren – Duplikate werden übersprungen.
+  Kopie sollte direkt funktionieren (fehlende Spalten werden ergänzt). Vorher eine
+  Sicherung anlegen. Die Datei muss `www-data` gehören, sonst kann PHP nicht schreiben:
+
+  ```bash
+  sudo install -o www-data -g www-data -m 660 transactions.db /var/www/sparkassentracker/data/
+  ```
+
+  Alternativ einfach die CSVs neu importieren – Duplikate werden übersprungen.
+
+## Deploy
+
+### Dateirechte
+
+| Pfad | Besitzer | Rechte | Warum |
+|---|---|---|---|
+| `/var/www/sparkassentracker` (Code) | `pi:pi` | `755` / `644` | `git pull` ohne sudo; `www-data` darf nur lesen |
+| `/var/www/sparkassentracker/data` | `www-data:www-data` | `2770` | PHP schreibt hier DB, Regeln, Passwort-Hash, Sessions; andere haben keinen Zugriff |
+
+Das `2` (setgid) sorgt dafür, dass neue Dateien in `data/` der Gruppe `www-data` gehören.
+`pi` kommt in die Gruppe `www-data`, damit Backups und `git status` ohne sudo gehen.
+
+Einmalig nach dem `git clone` ausführen:
+
+```bash
+sudo chown -R www-data:www-data /var/www/sparkassentracker/data
+```
+
+```bash
+sudo chmod 2770 /var/www/sparkassentracker/data
+```
+
+```bash
+sudo usermod -aG www-data pi
+```
+
+Die Gruppenmitgliedschaft gilt erst nach erneutem Anmelden (SSH-Sitzung neu öffnen).
+
+Prüfen:
+
+```bash
+ls -ld /var/www/sparkassentracker /var/www/sparkassentracker/data
+```
+
+Erwartet: `drwxr-xr-x pi pi` für den Code und `drwxrws--- www-data www-data` für `data/`.
+
+### Update auf dem Pi
+
+Neue Versionen vom Branch `main` holen.
+
+1. Daten sichern (ohne Sessions):
+
+   ```bash
+   tar -czf ~/sparkassentracker-data-$(date +%F).tar.gz --exclude=data/sessions -C /var/www/sparkassentracker data
+   ```
+
+2. Code aktualisieren:
+
+   ```bash
+   git -C /var/www/sparkassentracker pull --ff-only
+   ```
+
+3. PHP-FPM neu laden, damit der OPcache sicher den neuen Code verwendet
+   (laufende Anfragen werden sauber beendet, Recordloom merkt davon nichts):
+
+   ```bash
+   sudo systemctl reload php8.4-fpm
+   ```
+
+4. Nur wenn sich `deploy/nginx-unterpfad-tracker.conf` geändert hat: den Block in der
+   Recordloom-Konfiguration anpassen, dann `sudo nginx -t` und `sudo systemctl reload nginx`.
+
+Datenbank-Änderungen (neue Spalten) übernimmt die App beim nächsten Aufruf selbst.
+Die Rechte bleiben bei `git pull` erhalten; `data/` wird von Git nicht angefasst
+(außer `data/.gitkeep`).
+
+Falls `git pull` mit *dubious ownership* abbricht, gehört der Ordner nicht dem
+aufrufenden Benutzer – dann den `chown pi:pi`-Schritt aus der Installation wiederholen
+(nur für den Code-Ordner, nicht für `data/`).
 
 ## Passwort vergessen
 
-`/var/www/sparkassentracker/data/auth.json` löschen → beim nächsten Aufruf neues Passwort festlegen.
+Die Datei mit dem Passwort-Hash löschen, beim nächsten Aufruf ein neues Passwort festlegen:
+
+```bash
+sudo rm /var/www/sparkassentracker/data/auth.json
+```
 
 ## Backup
 
-Es reicht, den Ordner `/var/www/sparkassentracker/data/` zu sichern (`transactions.db`, `categories.json`).
-`data/sessions/` enthält nur Login-Sitzungen und muss nicht gesichert werden.
+Es reicht, den Ordner `/var/www/sparkassentracker/data/` zu sichern (`transactions.db`,
+`categories.json`, `auth.json`). `data/sessions/` enthält nur Login-Sitzungen und muss
+nicht gesichert werden. Der `tar`-Befehl aus [Update auf dem Pi](#update-auf-dem-pi)
+erledigt genau das.
 
 ## Sicherheit
 

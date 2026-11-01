@@ -13,6 +13,11 @@ return [
     // verschiedenen eigenen Konten (Kreditkartenausgleich bis zu 8 Tage versetzt)
     'transfer_max_days'      => 14,
 
+    // Überträge auf Konten vom Typ "Sparkonto" (Tagesgeld, Depot …) zählen in der
+    // Ansicht "Alle Konten" als Ausgabe in dieser Kategorie (Unterkategorie = Kontoname),
+    // Entnahmen als Einnahme – statt sich mit der Gegenbuchung aufzuheben.
+    'spar_kategorie'         => 'Sparen & Anlage',
+
     // Umsätze pro Seite in der Liste
     'page_size'              => 200,
 

@@ -112,7 +112,7 @@ function totals(array $f): array
             COALESCE(SUM(CASE WHEN betrag > 0 THEN betrag END),0) AS ein,
             COALESCE(SUM(CASE WHEN betrag < 0 THEN betrag END),0) AS aus,
             COUNT(*) AS n
-        FROM transactions $w", $p)[0];
+        FROM " . tx_src($f['konto']) . " $w", $p)[0];
     return ['ein' => (float) $r['ein'], 'aus' => (float) $r['aus'], 'saldo' => (float) $r['ein'] + (float) $r['aus'], 'n' => (int) $r['n']];
 }
 
@@ -122,7 +122,7 @@ function monthly_series(array $f): array
     $rows = db_all("SELECT substr(datum,1,7) AS m,
             SUM(CASE WHEN betrag > 0 THEN betrag ELSE 0 END) AS ein,
             SUM(CASE WHEN betrag < 0 THEN -betrag ELSE 0 END) AS aus
-        FROM transactions $w GROUP BY m ORDER BY m", $p);
+        FROM " . tx_src($f['konto']) . " $w GROUP BY m ORDER BY m", $p);
     return array_map(fn ($r) => [
         'monat' => $r['m'],
         'ein'   => round((float) $r['ein'], 2),
@@ -138,7 +138,7 @@ function category_breakdown(array $f, bool $income = false): array
     $w .= ($w ? ' AND ' : 'WHERE ') . ($income ? 'betrag > 0' : 'betrag < 0');
     $rows = db_all("SELECT COALESCE(NULLIF(kategorie,''),'Unbekannt') AS kat,
             COALESCE(unterkategorie,'') AS sub, SUM(betrag) AS summe, COUNT(*) AS n
-        FROM transactions $w GROUP BY kat, sub", $p);
+        FROM " . tx_src($f['konto']) . " $w GROUP BY kat, sub", $p);
     $cats = [];
     $total = 0.0;
     foreach ($rows as $r) {
@@ -447,7 +447,7 @@ function forecast(array $f): array
     [$w, $p] = where_clause($mf, 'category');
     $r = db_all("SELECT COALESCE(SUM(CASE WHEN betrag>0 THEN betrag END),0) AS ein,
                         COALESCE(SUM(CASE WHEN betrag<0 THEN -betrag END),0) AS aus
-                 FROM transactions $w", $p)[0];
+                 FROM " . tx_src($f['konto']) . " $w", $p)[0];
     $soFarIn = (float) $r['ein'];
     $soFarOut = (float) $r['aus'];
 
@@ -480,7 +480,7 @@ function forecast(array $f): array
         'to' => $t->modify('first day of this month')->modify('-1 day')->format('Y-m-d')];
     [$w, $p] = where_clause($hf, 'category');
     $hist = db_all("SELECT substr(datum,1,7) AS m, SUM(CASE WHEN betrag<0 THEN -betrag ELSE 0 END) AS aus
-                    FROM transactions $w GROUP BY m", $p);
+                    FROM " . tx_src($f['konto']) . " $w GROUP BY m", $p);
     $avg6 = $hist ? array_sum(array_column($hist, 'aus')) / count($hist) : null;
 
     return [
@@ -503,7 +503,7 @@ function monthly_category_expenses(string $konto, string $from, string $to): arr
     $w .= ($w ? ' AND ' : 'WHERE ') . 'betrag < 0';
     $out = [];
     foreach (db_all("SELECT substr(datum,1,7) AS m, COALESCE(NULLIF(kategorie,''),'Unbekannt') AS kat, -SUM(betrag) AS s
-                     FROM transactions $w GROUP BY m, kat", $p) as $r) {
+                     FROM " . tx_src($konto) . " $w GROUP BY m, kat", $p) as $r) {
         $out[$r['kat']][$r['m']] = (float) $r['s'];
     }
     return $out;
@@ -527,7 +527,7 @@ function insights(array $f): array
     $hist = monthly_category_expenses($konto, $histFrom, $histTo);
     $cur = monthly_category_expenses($konto, $ref->format('Y-m-d'), $refTo);
     [$w, $p] = where_clause(['konto' => $konto, 'from' => $histFrom, 'to' => $histTo], 'category');
-    $histMonths = array_column(db_all("SELECT DISTINCT substr(datum,1,7) AS m FROM transactions $w", $p), 'm');
+    $histMonths = array_column(db_all("SELECT DISTINCT substr(datum,1,7) AS m FROM " . tx_src($konto) . " $w", $p), 'm');
     $nHist = count($histMonths);
 
     // 1. Kategorien-Anstieg
@@ -592,7 +592,7 @@ function insights(array $f): array
     // 4. Ausreißer: > 3× Median der Kategorie (letzte 6 Monate inkl. aktuellem)
     [$w, $p] = where_clause(['konto' => $konto, 'from' => $histFrom, 'to' => $refTo], 'category');
     $tx = db_all("SELECT substr(datum,1,10) AS datum, empfaenger, betrag, COALESCE(NULLIF(kategorie,''),'Unbekannt') AS kat
-                  FROM transactions $w AND betrag < 0", $p);
+                  FROM " . tx_src($konto) . " $w AND betrag < 0", $p);
     $byKat = [];
     foreach ($tx as $t) {
         $byKat[$t['kat']][] = $t;
@@ -697,7 +697,7 @@ function yoy(int $year, string $konto): array
     $rows = db_all("SELECT substr(datum,1,4) AS y, CAST(substr(datum,6,2) AS INTEGER) AS m,
             SUM(CASE WHEN betrag<0 THEN -betrag ELSE 0 END) AS aus,
             SUM(CASE WHEN betrag>0 THEN betrag ELSE 0 END) AS ein
-        FROM transactions $w GROUP BY y, m", $p);
+        FROM " . tx_src($konto) . " $w GROUP BY y, m", $p);
     $months = [];
     for ($m = 1; $m <= 12; $m++) {
         $months[$m] = ['aus' => 0.0, 'ein' => 0.0, 'aus_vj' => 0.0, 'ein_vj' => 0.0, 'has' => false, 'has_vj' => false];
@@ -716,7 +716,7 @@ function yoy(int $year, string $konto): array
     foreach ([[$year, ''], [$prev, '_vj']] as [$y, $suffix]) {
         [$w, $p] = where_clause(['konto' => $konto, 'from' => "$y-01-01", 'to' => "$y-$cut"], 'category');
         foreach (db_all("SELECT COALESCE(NULLIF(kategorie,''),'Unbekannt') AS kat, -SUM(betrag) AS s
-                         FROM transactions $w AND betrag < 0 GROUP BY kat", $p) as $r) {
+                         FROM " . tx_src($konto) . " $w AND betrag < 0 GROUP BY kat", $p) as $r) {
             $cats[$r['kat']] ??= ['kat' => $r['kat'], 'aus' => 0.0, 'aus_vj' => 0.0];
             $cats[$r['kat']]['aus' . $suffix] = (float) $r['s'];
         }

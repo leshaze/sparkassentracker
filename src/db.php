@@ -11,7 +11,9 @@ function db(): PDO
     if ($pdo) {
         return $pdo;
     }
-    $pdo = new PDO('sqlite:' . cfg('data_dir') . '/transactions.db');
+    $dsn = 'sqlite:' . cfg('data_dir') . '/transactions.db';
+    // PHP ≥ 8.4: PDO::connect() liefert Pdo\Sqlite mit createFunction()
+    $pdo = method_exists(PDO::class, 'connect') ? PDO::connect($dsn) : new PDO($dsn);
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
     $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
     $pdo->exec('PRAGMA journal_mode = WAL');
@@ -20,8 +22,8 @@ function db(): PDO
 
     // Unicode-taugliches lower() für die Suche (SQLite-LOWER kann kein ä/ö/ü)
     $ulower = fn ($s) => $s === null ? null : mb_strtolower((string) $s);
-    if (method_exists($pdo, 'createFunction')) {
-        $pdo->createFunction('ulower', $ulower, 1, PDO::SQLITE_DETERMINISTIC);
+    if (class_exists('Pdo\\Sqlite') && $pdo instanceof Pdo\Sqlite) {
+        $pdo->createFunction('ulower', $ulower, 1, Pdo\Sqlite::DETERMINISTIC);
     } else {
         $pdo->sqliteCreateFunction('ulower', $ulower, 1, PDO::SQLITE_DETERMINISTIC);
     }

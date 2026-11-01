@@ -33,7 +33,7 @@ if (!auth_logged_in()) {
         csrf_check();
         if (auth_throttled()) {
             flash('Zu viele Fehlversuche – bitte 5 Minuten warten.', 'err');
-        } elseif (auth_verify((string) ($_POST['pw'] ?? ''))) {
+        } elseif (is_string($_POST['pw'] ?? null) && auth_verify($_POST['pw'])) {
             auth_record_attempt(true);
             auth_login();
             redirect('uebersicht');
@@ -81,6 +81,9 @@ if ($action !== '') {
                         }
                         continue;
                     }
+                    if (!is_uploaded_file($files['tmp_name'][$i])) {
+                        continue;
+                    }
                     $res = read_sparkasse_csv((string) file_get_contents($files['tmp_name'][$i]));
                     [$ins, $skip] = insert_rows($res['rows'], $konto, $rules);
                     $msgs[] = sprintf('%s (%s): %d neu, %d bereits vorhanden%s.', $name, $res['format'], $ins, $skip,
@@ -111,16 +114,19 @@ if ($action !== '') {
                 $hash = post('hash');
                 [$cat, $sub] = array_pad(explode('::', post('kategorie'), 2), 2, '');
                 $cat = $cat !== '' ? $cat : Rules::FALLBACK;
-                $old = db_all('SELECT kategorie, unterkategorie FROM transactions WHERE hash = ?', [$hash])[0] ?? null;
+                $old = db_all('SELECT kategorie, unterkategorie, ist_uebertrag, uebertrag_gesperrt FROM transactions WHERE hash = ?', [$hash])[0] ?? null;
                 if (!$old) {
                     throw new RuntimeException('Umsatz nicht gefunden.');
                 }
                 $catChanged = $old['kategorie'] !== $cat || (string) $old['unterkategorie'] !== $sub;
                 $ue = post('uebertrag') === '1' ? 1 : 0;
+                // Nur sperren, wenn ein Übertrag aktiv abgewählt wurde – sonst würde jede
+                // Kategorie-Änderung den Umsatz dauerhaft von der Übertragserkennung ausschließen.
+                $gesperrt = $ue ? 0 : ((int) $old['ist_uebertrag'] === 1 ? 1 : (int) $old['uebertrag_gesperrt']);
                 db_exec('UPDATE transactions SET kategorie = ?, unterkategorie = ?, notiz = ?, ist_uebertrag = ?,
                          uebertrag_gesperrt = ?, kategorie_manuell = CASE WHEN ? THEN 1 ELSE kategorie_manuell END
                          WHERE hash = ?',
-                    [$cat, $sub, post('notiz'), $ue, $ue ? 0 : 1, $catChanged ? 1 : 0, $hash]);
+                    [$cat, $sub, mb_substr(post('notiz'), 0, 500), $ue, $gesperrt, $catChanged ? 1 : 0, $hash]);
                 $msg = 'Umsatz gespeichert.';
                 if (post('regel') === '1' && post('regel_kw') !== '' && $cat !== Rules::FALLBACK) {
                     $rules->addKeyword($cat, $sub, post('regel_kw'));
@@ -173,7 +179,7 @@ if ($action !== '') {
                 break;
             case 'rules_upload':
                 $f = $_FILES['json'] ?? null;
-                if (!$f || $f['error'] !== UPLOAD_ERR_OK) {
+                if (!$f || !is_int($f['error']) || $f['error'] !== UPLOAD_ERR_OK || !is_uploaded_file($f['tmp_name'])) {
                     throw new RuntimeException('Keine Datei ausgewählt.');
                 }
                 $data = json_decode((string) file_get_contents($f['tmp_name']), true);
@@ -273,6 +279,11 @@ if ($page === 'umsaetze_export') {
         $r['valuta'] = fmt_date($r['valuta']);
         $r['betrag'] = number_format((float) $r['betrag'], 2, ',', '');
         $r['ist_uebertrag'] = $r['ist_uebertrag'] ? 'ja' : '';
+        // CSV-/Formel-Injection verhindern: Texte aus Bank-CSVs (z.B. Name des Auftraggebers)
+        // könnten mit =, +, -, @ beginnen und würden in Excel/LibreOffice als Formel ausgeführt.
+        foreach (['konto', 'empfaenger', 'zweck', 'buchungstext', 'waehrung', 'kategorie', 'unterkategorie', 'notiz'] as $k) {
+            $r[$k] = csv_safe((string) ($r[$k] ?? ''));
+        }
         fputcsv($out, array_values($r), ';', '"', '');
     }
     exit;

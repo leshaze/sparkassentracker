@@ -31,6 +31,8 @@
     });
 
     // ---------- Umsatz bearbeiten ----------
+    const PSP = ['paypal', 'klarna', 'sumup', 'zettle', 'stripe', 'adyen', 'mollie', 'unzer', 'ratepay',
+        'amazon payments', 'google pay', 'apple pay', 'sofort', 'giropay'];
     const dlg = $('#tx-dialog');
     if (dlg) {
         const form = $('form', dlg);
@@ -46,7 +48,11 @@
             form.uebertrag.checked = !!d.ue;
             ruleToggle.checked = false;
             ruleKw.hidden = true;
-            form.regel_kw.value = (d.empf || '').toLowerCase().trim();
+            // Bei Zahlungsdienstleistern sagt der Empfänger nichts über den Händler –
+            // dann eine Kombi-Regel "paypal + …" vorschlagen (Händler aus dem Verwendungszweck ergänzen)
+            const empf = (d.empf || '').toLowerCase().trim();
+            const psp = PSP.find((p) => empf.includes(p));
+            form.regel_kw.value = psp ? psp + ' + ' : empf;
             $('.d-empf', dlg).textContent = d.empf || d.btext || '—';
             $('.d-meta', dlg).textContent = [d.datum, d.konto, d.btext].filter(Boolean).join(' · ');
             const b = $('.d-betrag', dlg);
@@ -70,7 +76,11 @@
         });
         ruleToggle.addEventListener('change', () => {
             ruleKw.hidden = !ruleToggle.checked;
-            if (ruleToggle.checked) form.regel_kw.focus();
+            if (ruleToggle.checked) {
+                const kw = form.regel_kw;
+                kw.focus();
+                kw.setSelectionRange(kw.value.length, kw.value.length);
+            }
         });
         $('[data-close]', dlg).addEventListener('click', () => dlg.close());
         dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close(); });
@@ -142,7 +152,7 @@
     const v = (n) => css.getPropertyValue(n).trim();
     const dark = matchMedia('(prefers-color-scheme: dark)').matches;
     const ink2 = v('--ink-2'), muted = v('--muted'), line = v('--line-2'), surface = v('--surface');
-    const POS = '#2ecc71', NEG = '#e74c3c';
+    const POS = '#2ecc71', NEG = '#e74c3c', SAVE = v('--save') || '#2a78d6';
     // Kategoriale Reihenfolge (fest, nie gecycelt) – hell/dunkel validiert
     const CAT = dark
         ? ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300', '#9085e9']
@@ -174,6 +184,7 @@
         const kind = cv.dataset.chart;
 
         if (kind === 'monthly') {
+            const hasSave = data.some((d) => 'gespart' in d);
             new Chart(cv, {
                 data: {
                     labels: data.map((d) => d.label),
@@ -182,7 +193,9 @@
                           borderRadius: 4, borderSkipped: 'start', maxBarThickness: 22, categoryPercentage: .7, barPercentage: .9 },
                         { type: 'bar', label: 'Ausgaben', data: data.map((d) => d.aus), backgroundColor: NEG,
                           borderRadius: 4, borderSkipped: 'start', maxBarThickness: 22, categoryPercentage: .7, barPercentage: .9 },
-                        { type: 'line', label: 'Saldo', data: data.map((d) => d.saldo), borderColor: v('--ink'),
+                        ...(hasSave ? [{ type: 'bar', label: 'Gespart', data: data.map((d) => d.gespart), backgroundColor: SAVE,
+                          borderRadius: 4, borderSkipped: 'start', maxBarThickness: 22, categoryPercentage: .7, barPercentage: .9 }] : []),
+                        { type: 'line', label: hasSave ? 'Übrig nach Sparen' : 'Saldo', data: data.map((d) => d.saldo), borderColor: v('--ink'),
                           backgroundColor: v('--ink'), borderWidth: 2, pointRadius: 3, pointHoverRadius: 5,
                           pointBorderColor: surface, pointBorderWidth: 2, tension: .25 },
                     ],

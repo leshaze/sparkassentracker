@@ -9,8 +9,13 @@ z. B. `http://recordloom.local/tracker/`, und nutzt dessen PHP-FPM mit.
 - CSV-Import Giro/Tagesgeld (CSV-CAMT) und Kreditkarte, automatische Format-Erkennung,
   Windows-1252, Duplikaterkennung per SHA-256 (Konto im Hash)
 - Auto-Kategorisierung über `categories.json` (Dual-Format mit Unterkategorien,
-  Leerzeichen-Joker bis 40 Zeichen, längstes Stichwort gewinnt)
+  Leerzeichen-Joker bis 40 Zeichen, längstes Stichwort gewinnt). Gesucht wird in Empfänger,
+  Verwendungszweck und Buchungstext; Kombi-Regeln wie `paypal + steam` greifen nur, wenn alle
+  Teile vorkommen, und haben Vorrang (z. B. für PayPal-Zahlungen an verschiedene Händler)
 - Übertragserkennung zwischen eigenen Konten (Fenster 14 Tage, `config.php`)
+- Kontotyp *Alltag* / *Sparkonto* (unter *Import → Konten*): Überträge zwischen
+  Alltagskonten (Giro → Kreditkarte) heben sich auf, Überträge auf Sparkonten
+  (Tagesgeld, Depot) erscheinen als „Gespart“ mit Sparquote und „Übrig nach Sparen“
 - Konto- und Zeitraumfilter, Kategorie-Auswertung mit Unterkategorien, Monatsverlauf
 - Wiederkehrende Zahlungen (auto + manuell, ausblenden, Notizen)
 - Monatsprognose, Insights (6 Heuristiken), Vorjahresvergleich

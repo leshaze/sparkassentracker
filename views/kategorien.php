@@ -29,6 +29,11 @@ $chips = function (string $cat, string $sub, array $kws) { ?>
             <label class="check"><input type="checkbox" name="alle" value="1"> auch manuelle überschreiben</label>
             <button class="btn primary" type="submit">Neu kategorisieren</button>
         </form>
+        <p class="muted small">
+            Stichworte werden in Empfänger, Verwendungszweck und Buchungstext gesucht; das längste passende gewinnt.
+            <strong>Kombi-Regeln</strong> wie <code>paypal + steam</code> greifen nur, wenn alle Teile vorkommen,
+            und haben Vorrang – praktisch für PayPal, Klarna &amp; Co., bei denen der Händler im Verwendungszweck steht.
+        </p>
         <p class="muted small"><?= number_format($counts['Unbekannt'] ?? 0, 0, ',', '.') ?> Umsätze sind noch <a href="?p=umsaetze&amp;kat=Unbekannt">ohne Kategorie</a>.</p>
     </section>
     <section class="card">

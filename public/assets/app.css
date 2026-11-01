@@ -16,7 +16,6 @@
     --neg: #c0392b;          /* Text-Variante von #e74c3c */
     --pos-chart: #2ecc71;
     --neg-chart: #e74c3c;
-    --save: #2a78d6;         /* Gespart (Sparkonten) */
     --warn: #b9770e;
     --warn-soft: #fdf3e1;
     --high-soft: #fbe9e7;
@@ -43,7 +42,6 @@
         --accent-soft: #1f2d3d;
         --pos: #2ecc71;
         --neg: #e74c3c;
-        --save: #3987e5;
         --warn: #f0b252;
         --warn-soft: #33291a;
         --high-soft: #3a2220;
@@ -57,7 +55,7 @@
 :root[data-theme="dark"] {
     --bg: #12151b; --surface: #1a1f27; --surface-2: #20262f; --ink: #e7eaf0; --ink-2: #c0c6d1;
     --muted: #8d96a5; --line: #2c333e; --line-2: #252b35; --accent: #6ea8dc; --accent-ink: #0d1520;
-    --accent-soft: #1f2d3d; --pos: #2ecc71; --neg: #e74c3c; --save: #3987e5; --warn: #f0b252; --warn-soft: #33291a;
+    --accent-soft: #1f2d3d; --pos: #2ecc71; --neg: #e74c3c; --warn: #f0b252; --warn-soft: #33291a;
     --high-soft: #3a2220; --info-soft: #232a34; --transfer: #a29bfe; --shadow: none; color-scheme: dark;
 }
 
@@ -81,7 +79,6 @@ p { margin: .4rem 0; }
 .nowrap { white-space: nowrap; }
 .pos { color: var(--pos); }
 .neg { color: var(--neg); }
-.save { color: var(--save); }
 .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .hint { font-size: .8rem; color: var(--muted); margin-top: .6rem; }
 .lead { margin: 0 0 1rem; }

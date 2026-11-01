@@ -67,18 +67,25 @@ $sortLink = function (string $col, string $label) use ($sort, $dir, $qs) {
                 </tr>
             </thead>
             <tbody>
-            <?php foreach ($rows as $r): ?>
+            <?php foreach ($rows as $r):
+                // In "Alle Konten" kommen die Zeilen aus der Auswertungs-Sicht: Sparkonto-Überträge
+                // sind dort umgebucht. Der Dialog bearbeitet aber immer die echte Buchung.
+                $sparen = !empty($r['ist_sparen']);
+                $o = $sparen ? ['kategorie' => $r['kategorie_orig'], 'unterkategorie' => $r['unterkategorie_orig'],
+                    'ist_uebertrag' => $r['ist_uebertrag_orig'], 'betrag' => $r['betrag_orig']] + $r : $r;
+            ?>
                 <tr class="<?= $r['ist_uebertrag'] ? 'is-transfer' : '' ?>" tabindex="0" data-edit="<?= json_attr([
-                    'hash' => $r['hash'], 'kategorie' => $r['kategorie'] . ($r['unterkategorie'] ? '::' . $r['unterkategorie'] : ''),
-                    'notiz' => $r['notiz'] ?? '', 'ue' => (int) $r['ist_uebertrag'], 'empf' => $r['empfaenger'],
-                    'zweck' => $r['zweck'], 'btext' => $r['buchungstext'], 'datum' => fmt_date($r['datum']),
-                    'betrag' => fmt_eur((float) $r['betrag']), 'konto' => $r['konto'],
+                    'hash' => $o['hash'], 'kategorie' => $o['kategorie'] . ($o['unterkategorie'] ? '::' . $o['unterkategorie'] : ''),
+                    'notiz' => $o['notiz'] ?? '', 'ue' => (int) $o['ist_uebertrag'], 'empf' => $o['empfaenger'],
+                    'zweck' => $o['zweck'], 'btext' => $o['buchungstext'], 'datum' => fmt_date($o['datum']),
+                    'betrag' => fmt_eur((float) $o['betrag']), 'konto' => $o['konto'],
                 ]) ?>">
                     <td class="c-date"><?= h(fmt_date($r['datum'])) ?></td>
                     <td class="c-konto"><span class="konto-tag"><?= h($r['konto']) ?></span></td>
                     <td class="c-text">
                         <div class="empf"><?= h($r['empfaenger'] ?: $r['buchungstext'] ?: '—') ?>
                             <?php if ($r['ist_uebertrag']): ?><span class="badge transfer">Übertrag</span><?php endif; ?>
+                            <?php if ($sparen): ?><span class="badge transfer" title="Übertrag auf ein Sparkonto – zählt in „Alle Konten“ als <?= $r['betrag'] < 0 ? 'Ausgabe' : 'Einnahme' ?>"><?= $r['betrag'] < 0 ? 'Sparen' : 'Entnahme' ?></span><?php endif; ?>
                         </div>
                         <div class="zweck muted"><?= h($r['zweck']) ?></div>
                         <?php if (!empty($r['notiz'])): ?><div class="notiz">✎ <?= h($r['notiz']) ?></div><?php endif; ?>

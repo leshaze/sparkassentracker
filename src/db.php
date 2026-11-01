@@ -86,7 +86,35 @@ function db(): PDO
             $pdo->exec("ALTER TABLE recurring_overrides ADD COLUMN $col $type");
         }
     }
+    // Auswertungs-Sicht für "Alle Konten": Übertrags-Buchungen auf Sparkonten heben sich
+    // nicht mit der Gegenbuchung auf, sondern zählen aus Sicht des Haushalts – Einzahlung
+    // als Ausgabe, Entnahme als Einnahme – in der Spar-Kategorie (Unterkategorie = Konto).
+    // TEMP-View: lebt nur in dieser Verbindung, schreibt nichts ins Schema der Datei.
+    $sparKat = $pdo->quote((string) (cfg('spar_kategorie') ?: 'Sparen & Anlage'));
+    $pdo->exec("
+        CREATE TEMP VIEW IF NOT EXISTS tx_auswertung AS
+        SELECT t.hash, t.konto, t.datum, t.valuta, t.empfaenger, t.zweck, t.buchungstext, t.waehrung,
+               t.imported_at, t.kategorie_manuell, t.uebertrag_gesperrt, t.notiz,
+               CASE WHEN s.konto IS NULL THEN t.betrag         ELSE -t.betrag END AS betrag,
+               CASE WHEN s.konto IS NULL THEN t.kategorie      ELSE $sparKat  END AS kategorie,
+               CASE WHEN s.konto IS NULL THEN t.unterkategorie ELSE t.konto   END AS unterkategorie,
+               CASE WHEN s.konto IS NULL THEN t.ist_uebertrag  ELSE 0         END AS ist_uebertrag,
+               s.konto IS NOT NULL AS ist_sparen,
+               t.betrag AS betrag_orig, t.kategorie AS kategorie_orig,
+               t.unterkategorie AS unterkategorie_orig, t.ist_uebertrag AS ist_uebertrag_orig
+        FROM transactions t
+        LEFT JOIN konto_typen s ON s.konto = t.konto AND s.typ = 'spar' AND t.ist_uebertrag = 1
+    ");
     return $pdo;
+}
+
+/**
+ * Datenquelle für Auswertungen: bei "Alle Konten" die Sicht mit Spar-Logik,
+ * bei einem Einzelkonto die echten Buchungen (dort zählen Überträge ohnehin mit).
+ */
+function tx_src(string $konto): string
+{
+    return $konto === '' ? 'tx_auswertung' : 'transactions';
 }
 
 function db_all(string $sql, array $params = []): array

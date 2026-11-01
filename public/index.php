@@ -355,12 +355,13 @@ switch ($page) {
         if ($extra) {
             $w .= ($w ? ' AND ' : 'WHERE ') . implode(' AND ', $extra);
         }
-        $count = (int) db_one("SELECT COUNT(*) FROM transactions $w", $p);
-        $sum = (float) db_one("SELECT COALESCE(SUM(betrag),0) FROM transactions $w", $p);
+        $src = tx_src($f['konto']);
+        $count = (int) db_one("SELECT COUNT(*) FROM $src $w", $p);
+        $sum = (float) db_one("SELECT COALESCE(SUM(betrag),0) FROM $src $w", $p);
         $size = (int) cfg('page_size');
         $pages_n = max(1, (int) ceil($count / $size));
         $pg = min($pages_n, max(1, (int) get('s', '1')));
-        $rows = db_all("SELECT * FROM transactions $w ORDER BY {$sortCols[$sort]} $dir, datum DESC, hash
+        $rows = db_all("SELECT * FROM $src $w ORDER BY {$sortCols[$sort]} $dir, datum DESC, hash
                         LIMIT $size OFFSET " . (($pg - 1) * $size), $p);
         $vars += compact('f', 'showUe', 'kat', 'q', 'sort', 'dir', 'count', 'sum', 'pg', 'pages_n', 'rows');
         $vars['rules'] = Rules::instance()->options();

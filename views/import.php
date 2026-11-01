@@ -74,8 +74,9 @@
             </form>
             <p class="muted small">
                 <strong>Kontotyp:</strong> Überträge zwischen <em>Alltag</em>-Konten (z.&nbsp;B. Giro → Kreditkarte)
-                heben sich auf. Überträge auf ein <em>Sparkonto</em> (Tagesgeld, Depot) erscheinen in der
-                Übersicht als „Gespart“, Entnahmen verringern den Wert.
+                heben sich in „Alle Konten“ auf. Überträge auf ein <em>Sparkonto</em> (Tagesgeld, Depot) zählen dort
+                als Ausgabe in „<?= h(cfg('spar_kategorie') ?: 'Sparen & Anlage') ?>“ (Unterkategorie = Kontoname),
+                Entnahmen als Einnahme – so stehen sie neben Sparplänen und Bausparen.
             </p>
         <?php endif; ?>
     </section>

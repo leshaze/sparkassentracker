@@ -102,8 +102,14 @@ if ($action !== '') {
             case 'konto_delete':
                 $k = post('konto');
                 $n = db_exec('DELETE FROM transactions WHERE konto = ?', [$k]);
+                db_exec('DELETE FROM konto_typen WHERE konto = ?', [$k]);
                 flash("Konto „{$k}“ mit $n Umsätzen gelöscht.");
                 redirect('import');
+
+            case 'konto_typ':
+                set_konto_typ(post('konto'), post('typ'));
+                flash('„' . post('konto') . '“ ist jetzt als ' . KONTO_TYPEN[post('typ')] . ' eingestellt.');
+                break;
 
             case 'detect_transfers':
                 $n = detect_transfers();
@@ -391,7 +397,9 @@ switch ($page) {
 
     case 'import':
         $vars['konten'] = db_all("SELECT konto, COUNT(*) AS n, MIN(substr(datum,1,10)) AS von, MAX(substr(datum,1,10)) AS bis,
-                                  SUM(ist_uebertrag) AS ue FROM transactions GROUP BY konto ORDER BY konto");
+                                  SUM(ist_uebertrag) AS ue,
+                                  COALESCE((SELECT typ FROM konto_typen kt WHERE kt.konto = t.konto), 'alltag') AS typ
+                                  FROM transactions t GROUP BY konto ORDER BY konto");
         break;
 }
 

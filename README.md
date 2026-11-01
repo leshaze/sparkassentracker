@@ -11,6 +11,9 @@ z. B. `http://recordloom.local/tracker/`, und nutzt dessen PHP-FPM mit.
 - Auto-Kategorisierung über `categories.json` (Dual-Format mit Unterkategorien,
   Leerzeichen-Joker bis 40 Zeichen, längstes Stichwort gewinnt)
 - Übertragserkennung zwischen eigenen Konten (Fenster 14 Tage, `config.php`)
+- Kontotyp *Alltag* / *Sparkonto* (unter *Import → Konten*): Überträge zwischen
+  Alltagskonten (Giro → Kreditkarte) heben sich auf, Überträge auf Sparkonten
+  (Tagesgeld, Depot) erscheinen als „Gespart“ mit Sparquote und „Übrig nach Sparen“
 - Konto- und Zeitraumfilter, Kategorie-Auswertung mit Unterkategorien, Monatsverlauf
 - Wiederkehrende Zahlungen (auto + manuell, ausblenden, Notizen)
 - Monatsprognose, Insights (6 Heuristiken), Vorjahresvergleich

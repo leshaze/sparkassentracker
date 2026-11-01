@@ -62,24 +62,46 @@
     <div class="card kpi">
         <span class="kpi-label">Ausgaben</span>
         <span class="kpi-value neg"><?= fmt_eur($totals['aus']) ?></span>
+        <?php if ($totals['gespart'] !== null): ?>
+            <span class="kpi-sub"><?= number_format($totals['n'], 0, ',', '.') ?> Umsätze, Überträge ausgeblendet</span>
+        <?php endif; ?>
     </div>
-    <div class="card kpi">
-        <span class="kpi-label">Saldo</span>
-        <span class="kpi-value <?= amount_class($totals['saldo']) ?>"><?= fmt_eur($totals['saldo'], true) ?></span>
-    </div>
-    <div class="card kpi">
-        <span class="kpi-label">Umsätze</span>
-        <span class="kpi-value"><?= number_format($totals['n'], 0, ',', '.') ?></span>
-        <span class="kpi-sub"><?= $f['konto'] === '' ? 'Überträge zwischen Konten ausgeblendet' : 'inkl. Überträge (für korrekten Saldo)' ?></span>
-    </div>
+    <?php if ($totals['gespart'] !== null): ?>
+        <div class="card kpi">
+            <span class="kpi-label">Gespart</span>
+            <span class="kpi-value <?= $totals['gespart'] < 0 ? 'neg' : 'save' ?>"><?= fmt_eur($totals['gespart'], true) ?></span>
+            <span class="kpi-sub">
+                <?= $totals['quote'] !== null ? 'Sparquote ' . h(fmt_pct($totals['quote'], false)) . ' · ' : '' ?>netto auf <?= h(implode(', ', spar_konten())) ?>
+            </span>
+        </div>
+        <div class="card kpi">
+            <span class="kpi-label">Übrig nach Sparen</span>
+            <span class="kpi-value <?= amount_class($totals['uebrig']) ?>"><?= fmt_eur($totals['uebrig'], true) ?></span>
+            <span class="kpi-sub">Vermögen gesamt <?= fmt_eur($totals['saldo'], true) ?></span>
+        </div>
+    <?php else: ?>
+        <div class="card kpi">
+            <span class="kpi-label">Saldo</span>
+            <span class="kpi-value <?= amount_class($totals['saldo']) ?>"><?= fmt_eur($totals['saldo'], true) ?></span>
+        </div>
+        <div class="card kpi">
+            <span class="kpi-label">Umsätze</span>
+            <span class="kpi-value"><?= number_format($totals['n'], 0, ',', '.') ?></span>
+            <span class="kpi-sub"><?= $f['konto'] === '' ? 'Überträge zwischen Konten ausgeblendet' : 'inkl. Überträge (für korrekten Saldo)' ?></span>
+        </div>
+    <?php endif; ?>
 </section>
+
+<?php if ($f['konto'] === '' && $totals['gespart'] === null && count(konten()) > 1): ?>
+    <p class="hint">Tipp: Tagesgeld oder Depot unter <a href="?p=import">Import → Konten</a> als <em>Sparkonto</em> markieren – dann erscheinen Einzahlungen dort als „Gespart“ statt sich mit dem Übertrag aufzuheben.</p>
+<?php endif; ?>
 
 <?php if ($monthly): ?>
 <section class="card">
     <div class="card-head"><h2>Monatsverlauf</h2></div>
     <div class="chart-box tall">
         <canvas data-chart="monthly" data-series="<?= json_attr(array_map(fn ($m) => $m + ['label' => fmt_month($m['monat'], true)], $monthly)) ?>"
-                role="img" aria-label="Einnahmen und Ausgaben pro Monat"></canvas>
+                role="img" aria-label="Einnahmen, Ausgaben<?= $totals['gespart'] !== null ? ', Gespart' : '' ?> pro Monat"></canvas>
     </div>
 </section>
 <?php endif; ?>

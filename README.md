@@ -22,16 +22,21 @@ Alle Daten bleiben auf dem Pi in `data/` (liegt außerhalb des Web-Roots).
 
 ## Voraussetzungen
 
-Recordloom läuft bereits mit nginx + PHP-FPM. Zusätzlich braucht der Tracker
-PHP ≥ 8.1 mit SQLite und mbstring – meist fehlt nur `php-sqlite3`
-(Raspberry Pi OS Bookworm, PHP 8.2):
+Recordloom läuft bereits mit nginx + PHP-FPM (auf dem Pi: **PHP 8.4**). Der Tracker
+braucht PHP ≥ 8.1 mit den Erweiterungen SQLite und mbstring – meist fehlt nur SQLite:
 
 ```bash
-sudo apt install php-sqlite3 php-mbstring
+sudo apt install php8.4-sqlite3 php8.4-mbstring
 ```
 
 ```bash
-sudo systemctl restart php8.2-fpm
+sudo systemctl restart php8.4-fpm
+```
+
+Prüfen, ob beides geladen ist:
+
+```bash
+php8.4 -m | grep -iE 'pdo_sqlite|mbstring'
 ```
 
 ## Installation
@@ -61,7 +66,7 @@ sudo chmod 770 /var/www/sparkassentracker/data
 Den Block aus `deploy/nginx-unterpfad-tracker.conf` **innerhalb** des bestehenden
 `server { … }` von Recordloom einfügen, am besten oberhalb von `location /` und
 `location ~ \.php$`. Den `fastcgi_pass`-Socket an den von Recordloom angleichen
-(z. B. `unix:/run/php/php8.2-fpm.sock`).
+(z. B. `unix:/run/php/php8.4-fpm.sock`).
 
 ```nginx
 location = /tracker { return 301 /tracker/; }
@@ -74,7 +79,7 @@ location ^~ /tracker/ {
     location ~ \.php$ {
         include fastcgi_params;
         fastcgi_param SCRIPT_FILENAME $request_filename;
-        fastcgi_pass unix:/run/php/php8.2-fpm.sock;
+        fastcgi_pass unix:/run/php/php8.4-fpm.sock;
     }
 }
 ```
@@ -97,7 +102,7 @@ Der Basis-Pfad wird automatisch erkannt; das Login-Cookie gilt nur für `/tracke
 und kollidiert nicht mit Recordloom.
 
 Größere CSV-Dateien: PHP-FPM begrenzt Uploads standardmäßig auf 2 MB
-(`upload_max_filesize`, `post_max_size` in `/etc/php/8.2/fpm/php.ini`).
+(`upload_max_filesize`, `post_max_size` in `/etc/php/8.4/fpm/php.ini`).
 
 ### Alternativen (nicht mehr Standard)
 

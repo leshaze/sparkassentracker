@@ -10,6 +10,11 @@ declare(strict_types=1);
  *
  * Matching: Leerzeichen im Keyword passen auf bis zu 40 beliebige Zeichen
  * (außer "|"), das längste passende Keyword gewinnt.
+ *
+ * Kombi-Regeln: "paypal + steam" passt, wenn ALLE Teile irgendwo in Empfänger,
+ * Verwendungszweck oder Buchungstext vorkommen. Kombi-Regeln haben Vorrang vor
+ * einfachen Stichworten (mehr Teile = spezifischer). Ein einzelnes "+" ohne
+ * zweiten Teil ("disney+") bleibt ein normales Stichwort.
  */
 final class Rules
 {
@@ -67,7 +72,7 @@ final class Rules
     {
         $out = [];
         foreach ($l as $kw) {
-            $kw = mb_strtolower((string) $kw);
+            $kw = self::normalize((string) $kw);
             if (trim($kw) !== '' && !in_array($kw, $out, true)) {
                 $out[] = $kw;
             }
@@ -118,6 +123,7 @@ final class Rules
 
     public function addCategory(string $cat): void
     {
+        $this->compiled = null;
         $cat = trim($cat);
         if ($cat !== '' && !isset($this->cats[$cat])) {
             $this->cats[$cat] = ['_keywords' => [], 'subs' => []];
@@ -126,11 +132,13 @@ final class Rules
 
     public function deleteCategory(string $cat): void
     {
+        $this->compiled = null;
         unset($this->cats[$cat]);
     }
 
     public function addSub(string $cat, string $sub): void
     {
+        $this->compiled = null;
         $cat = trim($cat);
         $sub = trim($sub);
         if ($cat === '') {
@@ -144,12 +152,14 @@ final class Rules
 
     public function deleteSub(string $cat, string $sub): void
     {
+        $this->compiled = null;
         unset($this->cats[$cat]['subs'][$sub]);
     }
 
     public function addKeyword(string $cat, string $sub, string $kw): void
     {
-        $kw = mb_strtolower($kw);
+        $this->compiled = null;
+        $kw = self::normalize($kw);
         if (trim($kw) === '') {
             return;
         }
@@ -173,6 +183,8 @@ final class Rules
 
     public function removeKeyword(string $cat, string $sub, string $kw): void
     {
+        $this->compiled = null;
+        $kw = self::normalize($kw);
         if (!isset($this->cats[$cat])) {
             return;
         }
@@ -186,6 +198,24 @@ final class Rules
     }
 
     // ---- Matching ---------------------------------------------------------
+
+    /** Kleinschreibung; Kombi-Regeln einheitlich als "a + b". */
+    public static function normalize(string $kw): string
+    {
+        $kw = mb_strtolower($kw);
+        $parts = self::comboParts($kw);
+        return $parts ? implode(' + ', $parts) : $kw;
+    }
+
+    /** Teile einer Kombi-Regel, oder null bei einem einfachen Stichwort. */
+    public static function comboParts(string $kw): ?array
+    {
+        if (!str_contains($kw, '+')) {
+            return null;
+        }
+        $parts = array_values(array_filter(array_map('trim', explode('+', $kw)), fn ($p) => $p !== ''));
+        return count($parts) >= 2 ? array_values(array_unique($parts)) : null;
+    }
 
     public static function keywordPattern(string $kw): string
     {
@@ -203,21 +233,29 @@ final class Rules
         return '/' . $pat . '/iu';
     }
 
+    /** @return array{0:int,1:int,2:string[],3:string,4:string} [Teile, Länge, Muster, Kategorie, Unterkategorie] */
+    private static function compileOne(string $kw, string $cat, string $sub): array
+    {
+        $parts = self::comboParts($kw) ?? [$kw];
+        $len = array_sum(array_map('mb_strlen', $parts));
+        return [count($parts), $len, array_map([self::class, 'keywordPattern'], $parts), $cat, $sub];
+    }
+
     private function compile(): array
     {
         $list = [];
         foreach ($this->cats as $cat => $e) {
             foreach ($e['_keywords'] as $kw) {
-                $list[] = [mb_strlen($kw), self::keywordPattern($kw), $cat, ''];
+                $list[] = self::compileOne($kw, $cat, '');
             }
             foreach ($e['subs'] as $sub => $kws) {
                 foreach ($kws as $kw) {
-                    $list[] = [mb_strlen($kw), self::keywordPattern($kw), $cat, $sub];
+                    $list[] = self::compileOne($kw, $cat, $sub);
                 }
             }
         }
-        // längstes Keyword zuerst → "longest keyword wins"
-        usort($list, fn ($a, $b) => $b[0] <=> $a[0]);
+        // Kombi-Regeln zuerst (mehr Teile), dann längstes Keyword → "longest keyword wins"
+        usort($list, fn ($a, $b) => [$b[0], $b[1]] <=> [$a[0], $a[1]]);
         return $list;
     }
 
@@ -226,10 +264,13 @@ final class Rules
     {
         $this->compiled ??= $this->compile();
         $text = mb_strtolower($text);
-        foreach ($this->compiled as [, $pat, $cat, $sub]) {
-            if (preg_match($pat, $text)) {
-                return [$cat, $sub];
+        foreach ($this->compiled as [, , $pats, $cat, $sub]) {
+            foreach ($pats as $pat) {
+                if (!preg_match($pat, $text)) {
+                    continue 2;
+                }
             }
+            return [$cat, $sub];
         }
         return [self::FALLBACK, ''];
     }

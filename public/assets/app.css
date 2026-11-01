@@ -399,3 +399,5 @@ ol.steps li { padding: 3px 0; }
 /* ---------- Login ---------- */
 body.bare .wrap { display: grid; place-items: center; min-height: 100vh; padding-top: 0; }
 .login-card { width: min(380px, 100%); padding: 26px 24px; }
+
+code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em; background: var(--surface-2); padding: 0 .3em; border-radius: 4px; }

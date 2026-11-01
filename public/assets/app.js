@@ -31,6 +31,8 @@
     });
 
     // ---------- Umsatz bearbeiten ----------
+    const PSP = ['paypal', 'klarna', 'sumup', 'zettle', 'stripe', 'adyen', 'mollie', 'unzer', 'ratepay',
+        'amazon payments', 'google pay', 'apple pay', 'sofort', 'giropay'];
     const dlg = $('#tx-dialog');
     if (dlg) {
         const form = $('form', dlg);
@@ -46,7 +48,11 @@
             form.uebertrag.checked = !!d.ue;
             ruleToggle.checked = false;
             ruleKw.hidden = true;
-            form.regel_kw.value = (d.empf || '').toLowerCase().trim();
+            // Bei Zahlungsdienstleistern sagt der Empfänger nichts über den Händler –
+            // dann eine Kombi-Regel "paypal + …" vorschlagen (Händler aus dem Verwendungszweck ergänzen)
+            const empf = (d.empf || '').toLowerCase().trim();
+            const psp = PSP.find((p) => empf.includes(p));
+            form.regel_kw.value = psp ? psp + ' + ' : empf;
             $('.d-empf', dlg).textContent = d.empf || d.btext || '—';
             $('.d-meta', dlg).textContent = [d.datum, d.konto, d.btext].filter(Boolean).join(' · ');
             const b = $('.d-betrag', dlg);
@@ -70,7 +76,11 @@
         });
         ruleToggle.addEventListener('change', () => {
             ruleKw.hidden = !ruleToggle.checked;
-            if (ruleToggle.checked) form.regel_kw.focus();
+            if (ruleToggle.checked) {
+                const kw = form.regel_kw;
+                kw.focus();
+                kw.setSelectionRange(kw.value.length, kw.value.length);
+            }
         });
         $('[data-close]', dlg).addEventListener('click', () => dlg.close());
         dlg.addEventListener('click', (e) => { if (e.target === dlg) dlg.close(); });

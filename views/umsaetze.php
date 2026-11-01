@@ -132,7 +132,9 @@ $sortLink = function (string $col, string $label) use ($sort, $dir, $qs) {
         </label>
         <label class="rule-kw" hidden>Stichwort
             <input type="text" name="regel_kw" placeholder="z.B. rewe">
-            <span class="hint">Groß-/Kleinschreibung egal. Leerzeichen passen auch auf Text dazwischen.</span>
+            <span class="hint">Durchsucht Empfänger, Verwendungszweck und Buchungstext. Groß-/Kleinschreibung egal,
+                Leerzeichen passen auch auf Text dazwischen. Mehrere Begriffe mit <code>+</code> verbinden
+                (z.&nbsp;B. <code>paypal + steam</code>): dann müssen alle vorkommen, und die Regel hat Vorrang.</span>
         </label>
         <label>Notiz <input type="text" name="notiz" maxlength="500"></label>
         <label class="check"><input type="checkbox" name="uebertrag" value="1"> Übertrag zwischen eigenen Konten</label>

@@ -41,21 +41,47 @@ php8.4 -m | grep -iE 'pdo_sqlite|mbstring'
 
 ## Installation
 
-Code per Git nach `/var/www/sparkassentracker` holen (dieser Pfad steht in der
-nginx-Konfiguration). Der Code gehört dem normalen Benutzer (hier `pi`), damit
-Updates ohne `sudo` per `git pull` gehen. Ist das Repository privat, auf dem Pi einen
-SSH-Schlüssel anlegen und bei GitHub als *Deploy Key* (nur lesen) hinterlegen.
+Wie bei Recordloom liegt alles unter `/var/www`, gehört `www-data` und alle Befehle
+laufen per `sudo` – Git-Befehle als `sudo -u www-data …`, damit keine Dateien mit
+falschem Besitzer entstehen.
+
+### Deploy Key für `www-data` (einmalig)
+
+Das Repository ist privat. `www-data` (Home-Verzeichnis `/var/www`) bekommt deshalb einen
+eigenen SSH-Schlüssel, der bei GitHub als *Deploy Key* (nur lesen) eingetragen wird.
+`/var/www/.ssh` wird von nginx nicht ausgeliefert, da die Server-Roots auf die
+`public/`-Ordner zeigen.
 
 ```bash
-sudo mkdir -p /var/www/sparkassentracker
+sudo install -d -o www-data -g www-data -m 700 /var/www/.ssh
 ```
 
 ```bash
-sudo chown pi:pi /var/www/sparkassentracker
+sudo -u www-data ssh-keygen -t ed25519 -N "" -C "sparkassentracker-deploy" -f /var/www/.ssh/id_ed25519
 ```
 
 ```bash
-git clone git@github.com:leshaze/sparkassentracker.git /var/www/sparkassentracker
+sudo cat /var/www/.ssh/id_ed25519.pub
+```
+
+Den ausgegebenen Schlüssel auf GitHub unter *leshaze/sparkassentracker → Settings →
+Deploy keys → Add deploy key* eintragen (ohne Schreibrecht). Dann die Verbindung testen
+und den Host-Schlüssel von GitHub mit `yes` bestätigen:
+
+```bash
+sudo -u www-data ssh -T git@github.com
+```
+
+Erwartet: `Hi leshaze/sparkassentracker! You've successfully authenticated …`
+
+### Code holen
+
+```bash
+sudo install -d -o www-data -g www-data -m 755 /var/www/sparkassentracker
+```
+
+```bash
+sudo -u www-data git clone git@github.com:leshaze/sparkassentracker.git /var/www/sparkassentracker
 ```
 
 Danach die Dateirechte setzen wie im Abschnitt [Dateirechte](#dateirechte) beschrieben.
@@ -132,50 +158,52 @@ Passwort festlegen → CSVs importieren.
 
 | Pfad | Besitzer | Rechte | Warum |
 |---|---|---|---|
-| `/var/www/sparkassentracker` (Code) | `pi:pi` | `755` / `644` | `git pull` ohne sudo; `www-data` darf nur lesen |
-| `/var/www/sparkassentracker/data` | `www-data:www-data` | `2770` | PHP schreibt hier DB, Regeln, Passwort-Hash, Sessions; andere haben keinen Zugriff |
+| `/var/www/sparkassentracker` (Code) | `www-data:www-data` | `755` / `644` | wie Recordloom; `git pull` läuft als `www-data` |
+| `/var/www/sparkassentracker/data` | `www-data:www-data` | `770` | DB, Regeln, Passwort-Hash, Sessions – nur für `www-data` |
+| `/var/backups/sparkassentracker` | `root:root` | `700` | Sicherungen vor jedem Update |
 
-Das `2` (setgid) sorgt dafür, dass neue Dateien in `data/` der Gruppe `www-data` gehören.
-`pi` kommt in die Gruppe `www-data`, damit Backups und `git status` ohne sudo gehen.
-
-Einmalig nach dem `git clone` ausführen:
+Einmalig nach dem `git clone` ausführen (setzt alles auf `www-data`, auch falls vorher
+etwas als `root` angelegt wurde):
 
 ```bash
-sudo chown -R www-data:www-data /var/www/sparkassentracker/data
+sudo chown -R www-data:www-data /var/www/sparkassentracker
 ```
 
 ```bash
-sudo chmod 2770 /var/www/sparkassentracker/data
+sudo chmod 770 /var/www/sparkassentracker/data
 ```
 
 ```bash
-sudo usermod -aG www-data pi
+sudo install -d -m 700 /var/backups/sparkassentracker
 ```
-
-Die Gruppenmitgliedschaft gilt erst nach erneutem Anmelden (SSH-Sitzung neu öffnen).
 
 Prüfen:
 
 ```bash
-ls -ld /var/www/sparkassentracker /var/www/sparkassentracker/data
+sudo ls -ld /var/www/sparkassentracker /var/www/sparkassentracker/data
 ```
 
-Erwartet: `drwxr-xr-x pi pi` für den Code und `drwxrws--- www-data www-data` für `data/`.
+Erwartet: `drwxr-xr-x www-data www-data` für den Code und `drwxrwx--- www-data www-data` für `data/`.
 
 ### Update auf dem Pi
 
-Neue Versionen vom Branch `main` holen.
+Neue Versionen vom Branch `main` holen:
+
+```bash
+cd /var/www/sparkassentracker
+```
 
 1. Daten sichern (ohne Sessions):
 
    ```bash
-   tar -czf ~/sparkassentracker-data-$(date +%F).tar.gz --exclude=data/sessions -C /var/www/sparkassentracker data
+   sudo tar -czf /var/backups/sparkassentracker/data-$(date +%F-%H%M).tar.gz --exclude=data/sessions -C /var/www/sparkassentracker data
    ```
 
-2. Code aktualisieren:
+2. Code aktualisieren – als `www-data`, nicht als `root`, sonst gehören neue Dateien
+   `root` bzw. Git bricht mit *dubious ownership* ab:
 
    ```bash
-   git -C /var/www/sparkassentracker pull --ff-only
+   sudo -u www-data git pull --ff-only
    ```
 
 3. PHP-FPM neu laden, damit der OPcache sicher den neuen Code verwendet
@@ -188,13 +216,12 @@ Neue Versionen vom Branch `main` holen.
 4. Nur wenn sich `deploy/nginx-unterpfad-tracker.conf` geändert hat: den Block in der
    Recordloom-Konfiguration anpassen, dann `sudo nginx -t` und `sudo systemctl reload nginx`.
 
-Datenbank-Änderungen (neue Spalten) übernimmt die App beim nächsten Aufruf selbst.
-Die Rechte bleiben bei `git pull` erhalten; `data/` wird von Git nicht angefasst
-(außer `data/.gitkeep`).
+Anders als bei Recordloom gibt es keinen Build-Schritt (kein Composer, kein npm) und
+keine Migrationen: neue Datenbank-Spalten legt die App beim nächsten Aufruf selbst an.
 
-Falls `git pull` mit *dubious ownership* abbricht, gehört der Ordner nicht dem
-aufrufenden Benutzer – dann den `chown pi:pi`-Schritt aus der Installation wiederholen
-(nur für den Code-Ordner, nicht für `data/`).
+Wurde doch einmal etwas als `root` angelegt (z. B. *Permission denied* oder
+*dubious ownership* bei `git pull`), den `chown -R`-Befehl aus [Dateirechte](#dateirechte)
+wiederholen.
 
 ## Passwort vergessen
 
@@ -209,7 +236,23 @@ sudo rm /var/www/sparkassentracker/data/auth.json
 Es reicht, den Ordner `/var/www/sparkassentracker/data/` zu sichern (`transactions.db`,
 `categories.json`, `auth.json`). `data/sessions/` enthält nur Login-Sitzungen und muss
 nicht gesichert werden. Der `tar`-Befehl aus [Update auf dem Pi](#update-auf-dem-pi)
-erledigt genau das.
+erledigt genau das und legt die Sicherung unter `/var/backups/sparkassentracker/` ab.
+
+Zurückspielen (vorher die aktuelle Version sichern, Dateiname anpassen). Die alten
+Datenbankdateien zuerst entfernen, damit keine übrig gebliebene `-wal`-Datei der
+aktuellen Datenbank auf die zurückgespielte angewendet wird:
+
+```bash
+sudo rm -f /var/www/sparkassentracker/data/transactions.db /var/www/sparkassentracker/data/transactions.db-wal /var/www/sparkassentracker/data/transactions.db-shm
+```
+
+```bash
+sudo tar -xzf /var/backups/sparkassentracker/data-JJJJ-MM-TT-HHMM.tar.gz -C /var/www/sparkassentracker
+```
+
+```bash
+sudo chown -R www-data:www-data /var/www/sparkassentracker/data
+```
 
 ## Sicherheit
 

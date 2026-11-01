@@ -105,6 +105,12 @@ function form_fields(string $action): string
         . '<input type="hidden" name="back_q" value="' . h(http_build_query($q)) . '">';
 }
 
+/** Neutralisiert Zellinhalte, die eine Tabellenkalkulation als Formel interpretieren würde. */
+function csv_safe(string $v): string
+{
+    return $v !== '' && strpbrk($v[0], "=+-@\t\r") !== false ? "'" . $v : $v;
+}
+
 function post(string $key, string $default = ''): string
 {
     $v = $_POST[$key] ?? $default;

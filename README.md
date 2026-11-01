@@ -79,9 +79,11 @@ sudo chown -R www-data:www-data /opt/sparkassentracker/data
 ## Backup
 
 Es reicht, den Ordner `data/` zu sichern (`transactions.db`, `categories.json`).
+`data/sessions/` enthält nur Login-Sitzungen und muss nicht gesichert werden.
 
 ## Sicherheit
 
-Gedacht fürs Heimnetz. Für Zugriff von unterwegs nicht den Port am Router
+Gedacht fürs Heimnetz. Das Passwort direkt nach der Installation festlegen – bis dahin
+kann es jeder im Netz setzen, der die Seite zuerst aufruft. Für Zugriff von unterwegs nicht den Port am Router
 freigeben, sondern über VPN (WireGuard/Tailscale) gehen oder einen
 Reverse-Proxy mit HTTPS davorsetzen.

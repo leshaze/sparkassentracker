@@ -421,7 +421,10 @@ function bookings_after_end(array $r): array
     if ($r['source'] !== 'auto' || !$r['ende_datum']) {
         return [];
     }
-    [$empf, $rounded] = explode('|', $r['key']);
+    // Empfänger kann selbst "|" enthalten → am letzten Trenner teilen
+    $pos = strrpos($r['key'], '|');
+    $empf = substr($r['key'], 0, $pos);
+    $rounded = substr($r['key'], $pos + 1);
     $rows = db_all("SELECT substr(datum,1,10) AS datum, betrag FROM transactions
                     WHERE ulower(trim(empfaenger)) = ? AND substr(datum,1,10) > ? AND ist_uebertrag = 0
                     ORDER BY datum", [$empf, $r['ende_datum']]);

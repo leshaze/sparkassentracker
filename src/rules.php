@@ -131,7 +131,11 @@ final class Rules
 
     public function addSub(string $cat, string $sub): void
     {
+        $cat = trim($cat);
         $sub = trim($sub);
+        if ($cat === '') {
+            return;
+        }
         $this->addCategory($cat);
         if ($sub !== '' && $sub !== '_keywords' && !isset($this->cats[$cat]['subs'][$sub])) {
             $this->cats[$cat]['subs'][$sub] = [];
@@ -149,8 +153,13 @@ final class Rules
         if (trim($kw) === '') {
             return;
         }
+        $cat = trim($cat);
+        $sub = trim($sub);
+        if ($cat === '') {
+            return;
+        }
         $this->addCategory($cat);
-        if ($sub !== '') {
+        if ($sub !== '' && $sub !== '_keywords') {
             $this->addSub($cat, $sub);
             $list = &$this->cats[$cat]['subs'][$sub];
         } else {

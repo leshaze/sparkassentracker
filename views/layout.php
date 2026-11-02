@@ -6,7 +6,7 @@
 <meta name="robots" content="noindex, nofollow">
 <meta name="color-scheme" content="light dark">
 <title><?= h(($title ?? '') ? $title . ' · ' : '') ?><?= h(cfg('app_name')) ?></title>
-<link rel="stylesheet" href="assets/app.css?v=5">
+<link rel="stylesheet" href="assets/app.css?v=7">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%231f4e79'/><path d='M8 21h16M8 16h10M8 11h13' stroke='white' stroke-width='3' stroke-linecap='round'/></svg>">
 </head>
 <body class="<?= !empty($bare) ? 'bare' : '' ?>">
@@ -35,6 +35,6 @@
 </main>
 
 <script src="assets/chart.umd.min.js"></script>
-<script src="assets/app.js?v=5"></script>
+<script src="assets/app.js?v=7"></script>
 </body>
 </html>

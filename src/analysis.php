@@ -228,6 +228,58 @@ function detect_transfers(): int
     return count($pairs);
 }
 
+/**
+ * Vor dem Löschen eines Kontos: Gegenbuchungen seiner Überträge auf den anderen
+ * Konten wieder zu normalen Buchungen machen – sonst blieben sie als „Übertrag“
+ * ausgeblendet, obwohl das Gegenstück fehlt (z. B. Sparrate aufs Tagesgeld, wenn
+ * das Tagesgeldkonto nicht mehr importiert wird). Paarung wie in detect_transfers():
+ * gleicher Betrag, umgekehrtes Vorzeichen, ≤ transfer_max_days, nächstgelegener gewinnt.
+ * Gibt die Zahl freigegebener Buchungen zurück.
+ */
+function release_transfer_partners(string $konto): int
+{
+    $maxDays = (int) cfg('transfer_max_days');
+    $own = db_all("SELECT substr(datum,1,10) AS datum, betrag FROM transactions
+        WHERE konto = ? AND ist_uebertrag = 1 ORDER BY datum", [$konto]);
+    if (!$own) {
+        return 0;
+    }
+    $others = db_all("SELECT hash, substr(datum,1,10) AS datum, betrag FROM transactions
+        WHERE konto <> ? AND ist_uebertrag = 1", [$konto]);
+    $used = [];
+    $release = [];
+    foreach ($own as $o) {
+        $best = null;
+        $bestDist = PHP_INT_MAX;
+        foreach ($others as $x) {
+            if (isset($used[$x['hash']])
+                || round((float) $x['betrag'] + (float) $o['betrag'], 2) != 0.0
+                || (float) $x['betrag'] == 0.0) {
+                continue;
+            }
+            $dist = abs(days_between($o['datum'], $x['datum']));
+            if ($dist <= $maxDays && $dist < $bestDist) {
+                $best = $x['hash'];
+                $bestDist = $dist;
+            }
+        }
+        if ($best !== null) {
+            $used[$best] = true;
+            $release[] = $best;
+        }
+    }
+    if ($release) {
+        $pdo = db();
+        $st = $pdo->prepare('UPDATE transactions SET ist_uebertrag = 0 WHERE hash = ?');
+        $pdo->beginTransaction();
+        foreach ($release as $h) {
+            $st->execute([$h]);
+        }
+        $pdo->commit();
+    }
+    return count($release);
+}
+
 // =============================================================================
 // Wiederkehrende Zahlungen
 // =============================================================================

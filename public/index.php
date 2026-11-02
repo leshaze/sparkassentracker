@@ -101,8 +101,10 @@ if ($action !== '') {
 
             case 'konto_delete':
                 $k = post('konto');
+                $freed = release_transfer_partners($k);
                 $n = db_exec('DELETE FROM transactions WHERE konto = ?', [$k]);
-                flash("Konto „{$k}“ mit $n Umsätzen gelöscht.");
+                flash("Konto „{$k}“ mit $n Umsätzen gelöscht."
+                    . ($freed ? " $freed Gegenbuchung(en) auf anderen Konten sind keine Überträge mehr und zählen wieder normal." : ''));
                 redirect('import');
 
             case 'detect_transfers':

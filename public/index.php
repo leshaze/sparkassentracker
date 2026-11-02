@@ -102,14 +102,8 @@ if ($action !== '') {
             case 'konto_delete':
                 $k = post('konto');
                 $n = db_exec('DELETE FROM transactions WHERE konto = ?', [$k]);
-                db_exec('DELETE FROM konto_typen WHERE konto = ?', [$k]);
                 flash("Konto „{$k}“ mit $n Umsätzen gelöscht.");
                 redirect('import');
-
-            case 'konto_typ':
-                set_konto_typ(post('konto'), post('typ'));
-                flash('„' . post('konto') . '“ ist jetzt als ' . KONTO_TYPEN[post('typ')] . ' eingestellt.');
-                break;
 
             case 'detect_transfers':
                 $n = detect_transfers();
@@ -355,13 +349,12 @@ switch ($page) {
         if ($extra) {
             $w .= ($w ? ' AND ' : 'WHERE ') . implode(' AND ', $extra);
         }
-        $src = tx_src($f['konto']);
-        $count = (int) db_one("SELECT COUNT(*) FROM $src $w", $p);
-        $sum = (float) db_one("SELECT COALESCE(SUM(betrag),0) FROM $src $w", $p);
+        $count = (int) db_one("SELECT COUNT(*) FROM transactions $w", $p);
+        $sum = (float) db_one("SELECT COALESCE(SUM(betrag),0) FROM transactions $w", $p);
         $size = (int) cfg('page_size');
         $pages_n = max(1, (int) ceil($count / $size));
         $pg = min($pages_n, max(1, (int) get('s', '1')));
-        $rows = db_all("SELECT * FROM $src $w ORDER BY {$sortCols[$sort]} $dir, datum DESC, hash
+        $rows = db_all("SELECT * FROM transactions $w ORDER BY {$sortCols[$sort]} $dir, datum DESC, hash
                         LIMIT $size OFFSET " . (($pg - 1) * $size), $p);
         $vars += compact('f', 'showUe', 'kat', 'q', 'sort', 'dir', 'count', 'sum', 'pg', 'pages_n', 'rows');
         $vars['rules'] = Rules::instance()->options();
@@ -398,9 +391,7 @@ switch ($page) {
 
     case 'import':
         $vars['konten'] = db_all("SELECT konto, COUNT(*) AS n, MIN(substr(datum,1,10)) AS von, MAX(substr(datum,1,10)) AS bis,
-                                  SUM(ist_uebertrag) AS ue,
-                                  COALESCE((SELECT typ FROM konto_typen kt WHERE kt.konto = t.konto), 'alltag') AS typ
-                                  FROM transactions t GROUP BY konto ORDER BY konto");
+                                  SUM(ist_uebertrag) AS ue FROM transactions GROUP BY konto ORDER BY konto");
         break;
 }
 

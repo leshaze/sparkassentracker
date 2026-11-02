@@ -54,10 +54,6 @@ function db(): PDO
             kind       TEXT,
             notiz      TEXT
         );
-        CREATE TABLE IF NOT EXISTS konto_typen (
-            konto TEXT PRIMARY KEY,
-            typ   TEXT NOT NULL DEFAULT 'alltag'
-        );
         CREATE TABLE IF NOT EXISTS recurring_notes (
             schluessel TEXT PRIMARY KEY,
             notiz      TEXT
@@ -86,35 +82,7 @@ function db(): PDO
             $pdo->exec("ALTER TABLE recurring_overrides ADD COLUMN $col $type");
         }
     }
-    // Auswertungs-Sicht für "Alle Konten": Übertrags-Buchungen auf Sparkonten heben sich
-    // nicht mit der Gegenbuchung auf, sondern zählen aus Sicht des Haushalts – Einzahlung
-    // als Ausgabe, Entnahme als Einnahme – in der Spar-Kategorie (Unterkategorie = Konto).
-    // TEMP-View: lebt nur in dieser Verbindung, schreibt nichts ins Schema der Datei.
-    $sparKat = $pdo->quote((string) (cfg('spar_kategorie') ?: 'Sparen & Anlage'));
-    $pdo->exec("
-        CREATE TEMP VIEW IF NOT EXISTS tx_auswertung AS
-        SELECT t.hash, t.konto, t.datum, t.valuta, t.empfaenger, t.zweck, t.buchungstext, t.waehrung,
-               t.imported_at, t.kategorie_manuell, t.uebertrag_gesperrt, t.notiz,
-               CASE WHEN s.konto IS NULL THEN t.betrag         ELSE -t.betrag END AS betrag,
-               CASE WHEN s.konto IS NULL THEN t.kategorie      ELSE $sparKat  END AS kategorie,
-               CASE WHEN s.konto IS NULL THEN t.unterkategorie ELSE t.konto   END AS unterkategorie,
-               CASE WHEN s.konto IS NULL THEN t.ist_uebertrag  ELSE 0         END AS ist_uebertrag,
-               s.konto IS NOT NULL AS ist_sparen,
-               t.betrag AS betrag_orig, t.kategorie AS kategorie_orig,
-               t.unterkategorie AS unterkategorie_orig, t.ist_uebertrag AS ist_uebertrag_orig
-        FROM transactions t
-        LEFT JOIN konto_typen s ON s.konto = t.konto AND s.typ = 'spar' AND t.ist_uebertrag = 1
-    ");
     return $pdo;
-}
-
-/**
- * Datenquelle für Auswertungen: bei "Alle Konten" die Sicht mit Spar-Logik,
- * bei einem Einzelkonto die echten Buchungen (dort zählen Überträge ohnehin mit).
- */
-function tx_src(string $konto): string
-{
-    return $konto === '' ? 'tx_auswertung' : 'transactions';
 }
 
 function db_all(string $sql, array $params = []): array
@@ -151,26 +119,6 @@ function tx_hash(string $konto, string $datum, float $betrag, string $empf, stri
         mb_strtolower(trim($btext)),
     ]);
     return hash('sha256', $raw);
-}
-
-const KONTO_TYPEN = ['alltag' => 'Alltag', 'spar' => 'Sparkonto'];
-
-/** Konten, deren Überträge als „Gespart“ zählen (Tagesgeld, Depot …). */
-function spar_konten(): array
-{
-    return array_column(db_all("SELECT konto FROM konto_typen WHERE typ = 'spar' ORDER BY konto"), 'konto');
-}
-
-function set_konto_typ(string $konto, string $typ): void
-{
-    if (!isset(KONTO_TYPEN[$typ])) {
-        throw new RuntimeException('Unbekannter Kontotyp.');
-    }
-    if (!in_array($konto, konten(), true)) {
-        throw new RuntimeException('Konto nicht gefunden.');
-    }
-    db_exec('INSERT INTO konto_typen (konto, typ) VALUES (?, ?)
-             ON CONFLICT(konto) DO UPDATE SET typ = excluded.typ', [$konto, $typ]);
 }
 
 function konten(): array

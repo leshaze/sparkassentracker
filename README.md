@@ -184,7 +184,7 @@ sudo rm -f /var/www/sparkassentracker/data/transactions.db /var/www/sparkassentr
 ```
 
 ```bash
-sudo tar -xzf /var/backups/sparkassentracker/data-JJJJ-MM-TT-HHMM.tar.gz -C /var/www/sparkassentracker
+sudo tar -xzf /var/backups/sparkassentracker/data-JJJJ-MM-TT-HHMMSS.tar.gz -C /var/www/sparkassentracker
 ```
 
 ```bash

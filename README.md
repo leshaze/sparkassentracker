@@ -53,18 +53,14 @@ Einmalig klonen (mit deinem normalen GitHub-Zugang, das Repository ist privat):
 git clone git@github.com:leshaze/sparkassentracker.git ~/sparkassentracker
 ```
 
-Ziel- und Backup-Ordner anlegen:
+Dann das Deploy-Script ausführen – es legt bei der Erstinstallation auch
+`/var/www/sparkassentracker` und den Backup-Ordner an (Details unter [Deploy](#deploy)):
 
 ```bash
-sudo install -d -o www-data -g www-data -m 770 /var/www/sparkassentracker/data
+~/sparkassentracker/deploy/deploy.sh
 ```
 
-```bash
-sudo install -d -m 700 /var/backups/sparkassentracker
-```
-
-Dann die Schritte 3–5 aus [Deploy](#deploy) ausführen (kopieren, Rechte setzen,
-PHP-FPM neu laden) und nginx wie folgt einrichten.
+Danach nginx wie folgt einrichten.
 
 ### nginx-Konfiguration
 
@@ -134,49 +130,35 @@ Passwort festlegen → CSVs importieren.
 
 ## Deploy
 
-Bei jeder neuen Version:
+Bei jeder neuen Version (als normaler Benutzer, **nicht** mit `sudo` starten – das Script
+fragt selbst nach dem Passwort):
 
-1. Code holen:
+```bash
+~/sparkassentracker/deploy/deploy.sh
+```
 
-   ```bash
-   git -C ~/sparkassentracker pull
-   ```
+Das Script `deploy/deploy.sh` macht nacheinander:
 
-2. Daten sichern (ohne Sessions):
+1. **Code holen:** `git pull --ff-only` in `~/sparkassentracker` und zeigt die neuen Commits.
+2. **Daten sichern:** `data/` ohne Sessions nach
+   `/var/backups/sparkassentracker/data-DATUM-UHRZEIT.tar.gz` (bei der Erstinstallation übersprungen).
+3. **Kopieren:** per `rsync` nach `/var/www/sparkassentracker`. `data/` (Datenbank, Passwort) und
+   `.git` werden nicht angefasst, im Repository gelöschte Dateien verschwinden auch im Ziel.
+4. **Rechte setzen:** alles gehört `www-data`, `data/` hat `770` (nur `www-data`).
+5. **PHP-FPM neu laden** (`php8.4-fpm`), damit sicher der neue Code verwendet wird –
+   Recordloom läuft ungestört weiter.
 
-   ```bash
-   sudo tar -czf /var/backups/sparkassentracker/data-$(date +%F-%H%M).tar.gz --exclude=data/sessions -C /var/www/sparkassentracker data
-   ```
+Hat sich `deploy/nginx-unterpfad-tracker.conf` geändert, weist das Script am Ende darauf hin:
+dann den Block in der Recordloom-Konfiguration anpassen, `sudo nginx -t` und
+`sudo systemctl reload nginx`.
 
-3. Nach `/var/www` kopieren. `data/` (Datenbank, Passwort) und `.git` werden dabei nicht
-   angefasst, im Repository gelöschte Dateien werden auch im Ziel entfernt:
-
-   ```bash
-   sudo rsync -a --delete --exclude=/data/ --exclude=/.git/ ~/sparkassentracker/ /var/www/sparkassentracker/
-   ```
-
-4. Berechtigungen setzen – alles gehört `www-data`, `data/` ist nur für `www-data` zugänglich:
-
-   ```bash
-   sudo chown -R www-data:www-data /var/www/sparkassentracker
-   ```
-
-   ```bash
-   sudo chmod 770 /var/www/sparkassentracker/data
-   ```
-
-5. PHP-FPM neu laden, damit sicher der neue Code verwendet wird (Recordloom läuft ungestört weiter):
-
-   ```bash
-   sudo systemctl reload php8.4-fpm
-   ```
+Bricht ein Schritt ab, stoppt das Script sofort (die Daten bleiben unberührt). Andere
+PHP-Version oder Pfade lassen sich per Umgebungsvariable setzen, z. B.
+`PHP_FPM_SERVICE=php8.3-fpm ~/sparkassentracker/deploy/deploy.sh`
+(außerdem `TARGET_DIR`, `BACKUP_DIR`, `WEB_USER`).
 
 Kein Build-Schritt, keine Migrationen: neue Datenbank-Spalten legt die App beim nächsten
-Aufruf selbst an. Nur wenn sich `deploy/nginx-unterpfad-tracker.conf` geändert hat, den
-Block in der Recordloom-Konfiguration anpassen und nginx neu laden (`sudo nginx -t`,
-dann `sudo systemctl reload nginx`).
-
-Falls `rsync` fehlt: `sudo apt install rsync`.
+Aufruf selbst an. Falls `rsync` fehlt: `sudo apt install rsync`.
 
 ## Passwort vergessen
 
@@ -190,7 +172,7 @@ sudo rm /var/www/sparkassentracker/data/auth.json
 
 Es reicht, den Ordner `/var/www/sparkassentracker/data/` zu sichern (`transactions.db`,
 `categories.json`, `auth.json`). `data/sessions/` enthält nur Login-Sitzungen und muss
-nicht gesichert werden. Schritt 2 aus [Deploy](#deploy)
+nicht gesichert werden. Das Deploy-Script ([Deploy](#deploy))
 erledigt genau das und legt die Sicherung unter `/var/backups/sparkassentracker/` ab.
 
 Zurückspielen (vorher die aktuelle Version sichern, Dateiname anpassen). Die alten
@@ -202,7 +184,7 @@ sudo rm -f /var/www/sparkassentracker/data/transactions.db /var/www/sparkassentr
 ```
 
 ```bash
-sudo tar -xzf /var/backups/sparkassentracker/data-JJJJ-MM-TT-HHMM.tar.gz -C /var/www/sparkassentracker
+sudo tar -xzf /var/backups/sparkassentracker/data-JJJJ-MM-TT-HHMMSS.tar.gz -C /var/www/sparkassentracker
 ```
 
 ```bash

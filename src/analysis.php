@@ -315,83 +315,139 @@ function recurring_key(string $empf, float $betrag): string
     return mb_strtolower(trim($empf)) . '|' . (int) round($betrag);
 }
 
-/** Erkennt regelmäßige Zahlungen pro (Empfänger, gerundeter Betrag). */
+/**
+ * Schlüssel für lange Intervalle (quartalsweise bis jährlich), bei denen sich der Betrag
+ * ändern darf (Beitragsanpassung): nur Empfänger + Vorzeichen, z. B. "huk-coburg|~-".
+ */
+function recurring_key_flex(string $empf, float $betrag): string
+{
+    return mb_strtolower(trim($empf)) . '|~' . ($betrag < 0 ? '-' : '+');
+}
+
+const FLEX_FREQUENZEN = ['Quartalsweise', 'Halbjährlich', 'Jährlich'];
+const FLEX_TOLERANZ = 0.25;   // ±25 % Betragsänderung bei langen Intervallen
+
+/**
+ * Erkennt regelmäßige Zahlungen.
+ *  1. Durchlauf: pro (Empfänger, gerundeter Betrag) – alle Rhythmen.
+ *  2. Durchlauf: übrige Buchungen pro (Empfänger, Vorzeichen) – nur quartalsweise bis
+ *     jährlich, Beträge dürfen um ±25 % schwanken (z. B. Versicherung 480 € → 512 €).
+ *     Als Betrag zählt dann die letzte Zahlung.
+ */
 function detect_recurring(?string $today = null): array
 {
     $today ??= date('Y-m-d');
     $rows = db_all("SELECT substr(datum,1,10) AS datum, betrag, empfaenger, kategorie, konto
-        FROM transactions WHERE ist_uebertrag = 0 AND trim(empfaenger) <> '' ORDER BY datum");
+        FROM transactions WHERE ist_uebertrag = 0 AND trim(empfaenger) <> '' AND betrag <> 0 ORDER BY datum");
     $groups = [];
-    $payeeDates = [];
-    foreach ($rows as $r) {
-        $groups[recurring_key($r['empfaenger'], (float) $r['betrag'])][] = $r;
-        $payeeDates[mb_strtolower(trim($r['empfaenger']))][] = $r['datum'];
+    foreach ($rows as $i => $r) {
+        $groups[recurring_key($r['empfaenger'], (float) $r['betrag'])][] = $i;
     }
 
     $out = [];
-    foreach ($groups as $key => $g) {
-        $dates = array_values(array_unique(array_column($g, 'datum')));
-        if (count($dates) < 2) {
-            continue;
+    $consumed = [];
+    foreach ($groups as $key => $idx) {
+        if ($rec = recurring_evaluate($rows, $idx, $key, false, $consumed, $today)) {
+            $out[] = $rec;
+            foreach ($idx as $i) {
+                $consumed[$i] = true;
+            }
         }
-        $iv = [];
-        for ($i = 1; $i < count($dates); $i++) {
-            $iv[] = days_between($dates[$i - 1], $dates[$i]);
+    }
+
+    $flex = [];
+    foreach ($rows as $i => $r) {
+        if (!isset($consumed[$i])) {
+            $flex[recurring_key_flex($r['empfaenger'], (float) $r['betrag'])][] = $i;
         }
-        $freq = classify_interval(median($iv));
-        if (!$freq) {
-            continue;
+    }
+    foreach ($flex as $key => $idx) {
+        if ($rec = recurring_evaluate($rows, $idx, $key, true, $consumed, $today)) {
+            $out[] = $rec;
         }
-        $fd = FREQUENZEN[$freq];
-        $minCount = $fd >= 180 ? 2 : 3;
-        if (count($dates) < $minCount) {
-            continue;
-        }
-        $tol = max(3.0, $fd * 0.2);
-        $regular = count(array_filter($iv, fn ($d) => abs($d - $fd) <= $tol));
-        if ($regular / count($iv) < 0.6) {
-            continue;
-        }
-        // Bei nur zwei Buchungen muss der Betrag centgenau gleich sein
-        $amounts = array_map(fn ($r) => round((float) $r['betrag'], 2), $g);
-        if (count($dates) < 3 && count(array_unique($amounts)) > 1) {
-            continue;
-        }
-        // Händler mit vielen unterschiedlichen Beträgen (Supermarkt, Bäcker …) sind kein Abo:
-        // im selben Zeitraum deutlich mehr Buchungen beim Empfänger als in dieser Gruppe
-        $empfKey = mb_strtolower(trim($g[0]['empfaenger']));
-        $first = $dates[0];
-        $lastD = end($dates);
-        $allAtPayee = $payeeDates[$empfKey] ?? [];
-        $inSpan = count(array_filter($allAtPayee, fn ($d) => $d >= $first && $d <= $lastD));
-        if ($inSpan > 2 * count($g) + 2) {
-            continue;
-        }
-        $last3 = array_slice($g, -3);
-        $betrag = array_sum(array_column($last3, 'betrag')) / count($last3);
-        $last = end($dates);
-        $next = (new DateTimeImmutable($last))->modify(FREQ_MODIFY[$freq])->format('Y-m-d');
-        $kats = array_count_values(array_map(fn ($r) => $r['kategorie'] ?: 'Unbekannt', $g));
-        arsort($kats);
-        $since = days_between($last, $today);
-        $out[] = [
-            'key'            => $key,
-            'empfaenger'     => end($g)['empfaenger'],
-            'betrag'         => round($betrag, 2),
-            'frequenz'       => $freq,
-            'anzahl'         => count($dates),
-            'letztes_datum'  => $last,
-            'naechstes_datum'=> $next,
-            'summe_pro_jahr' => $betrag * 365.25 / $fd,
-            'kategorie'      => array_key_first($kats),
-            'konto'          => end($g)['konto'],
-            'aktiv'          => $since <= $fd * 2 + 5,
-            'source'         => 'auto',
-            'override_id'    => null,
-            'notiz'          => '',
-        ];
     }
     return $out;
+}
+
+/** Prüft eine Gruppe von Buchungen (Indizes in $rows) auf festen Rhythmus. */
+function recurring_evaluate(array $rows, array $idx, string $key, bool $flex, array $consumed, string $today): ?array
+{
+    $g = array_map(fn ($i) => $rows[$i], $idx);
+    $dates = array_values(array_unique(array_column($g, 'datum')));
+    if (count($dates) < 2) {
+        return null;
+    }
+    $iv = [];
+    for ($i = 1; $i < count($dates); $i++) {
+        $iv[] = days_between($dates[$i - 1], $dates[$i]);
+    }
+    $freq = classify_interval(median($iv));
+    if (!$freq || ($flex && !in_array($freq, FLEX_FREQUENZEN, true))) {
+        return null;
+    }
+    $fd = FREQUENZEN[$freq];
+    $minCount = $fd >= 180 ? 2 : 3;
+    if (count($dates) < $minCount) {
+        return null;
+    }
+    $tol = max(3.0, $fd * 0.2);
+    $regular = count(array_filter($iv, fn ($d) => abs($d - $fd) <= $tol));
+    if ($regular / count($iv) < 0.6) {
+        return null;
+    }
+    $amounts = array_map(fn ($r) => round((float) $r['betrag'], 2), $g);
+    if ($flex) {
+        // Beitragsanpassungen erlaubt, aber keine beliebigen Beträge
+        $med = abs(median($amounts));
+        foreach ($amounts as $a) {
+            if (abs(abs($a) - $med) > $med * FLEX_TOLERANZ) {
+                return null;
+            }
+        }
+    } elseif (count($dates) < 3 && count(array_unique($amounts)) > 1) {
+        // Bei nur zwei Buchungen muss der Betrag centgenau gleich sein
+        return null;
+    }
+    // Händler mit vielen unterschiedlichen Beträgen (Supermarkt, Bäcker …) sind kein Abo:
+    // im selben Zeitraum deutlich mehr (noch nicht zugeordnete) Buchungen beim Empfänger
+    $empfKey = mb_strtolower(trim($g[0]['empfaenger']));
+    $first = $dates[0];
+    $lastD = end($dates);
+    $inSpan = 0;
+    foreach ($rows as $i => $r) {
+        if (!isset($consumed[$i]) && $r['datum'] >= $first && $r['datum'] <= $lastD
+            && mb_strtolower(trim($r['empfaenger'])) === $empfKey) {
+            $inSpan++;
+        }
+    }
+    if ($inSpan > 2 * count($g) + 2) {
+        return null;
+    }
+    $betrag = $flex
+        ? (float) end($g)['betrag']                                     // aktueller Beitrag
+        : array_sum(array_column(array_slice($g, -3), 'betrag')) / count(array_slice($g, -3));
+    $last = end($dates);
+    $next = (new DateTimeImmutable($last))->modify(FREQ_MODIFY[$freq])->format('Y-m-d');
+    $kats = array_count_values(array_map(fn ($r) => $r['kategorie'] ?: 'Unbekannt', $g));
+    arsort($kats);
+    $since = days_between($last, $today);
+    return [
+        'key'            => $key,
+        'empfaenger'     => end($g)['empfaenger'],
+        'betrag'         => round($betrag, 2),
+        'frequenz'       => $freq,
+        'anzahl'         => count($dates),
+        'letztes_datum'  => $last,
+        'naechstes_datum'=> $next,
+        'summe_pro_jahr' => $betrag * 365.25 / $fd,
+        'kategorie'      => array_key_first($kats),
+        'konto'          => end($g)['konto'],
+        'aktiv'          => $since <= $fd * 2 + 5,
+        'source'         => 'auto',
+        'flex'           => $flex && count(array_unique($amounts)) > 1,   // Betrag hat sich geändert
+        'override_id'    => null,
+        'notiz'          => '',
+    ];
 }
 
 /**
@@ -403,11 +459,14 @@ function detect_recurring(?string $today = null): array
  *   beendet        – vom Nutzer als gekündigt/beendet markiert
  *   wieder_gebucht – als beendet markiert, aber NACH dem Ende-Datum erneut abgebucht
  */
-function recurring_list(bool $onlyActive = false): array
+function recurring_list(bool $onlyActive = false, ?string $today = null): array
 {
     $hidden = [];
-    foreach (db_all("SELECT empfaenger, betrag FROM recurring_overrides WHERE kind = 'hidden'") as $h) {
+    foreach (db_all("SELECT empfaenger, betrag, frequenz FROM recurring_overrides WHERE kind = 'hidden'") as $h) {
         $hidden[recurring_key($h['empfaenger'], (float) $h['betrag'])] = true;
+        if (in_array($h['frequenz'], FLEX_FREQUENZEN, true)) {
+            $hidden[recurring_key_flex($h['empfaenger'], (float) $h['betrag'])] = true;
+        }
     }
     $ended = [];
     foreach (db_all("SELECT id, schluessel, datum FROM recurring_overrides WHERE kind = 'ended'") as $e) {
@@ -438,7 +497,7 @@ function recurring_list(bool $onlyActive = false): array
     };
 
     $list = [];
-    foreach (detect_recurring() as $r) {
+    foreach (detect_recurring($today) as $r) {
         if (isset($hidden[$r['key']])) {
             continue;
         }
@@ -454,7 +513,8 @@ function recurring_list(bool $onlyActive = false): array
         $b = (float) $m['betrag'];
         $r = $apply([
             'key' => 'manual:' . $m['id'], 'empfaenger' => $m['empfaenger'], 'betrag' => $b,
-            'frequenz' => $freq, 'anzahl' => 0, 'letztes_datum' => null, 'naechstes_datum' => null,
+            'frequenz' => $freq, 'anzahl' => 0, 'letztes_datum' => null,
+            'naechstes_datum' => manual_next_due($m['datum'] ?? null, $freq, $today), 'faellig_anker' => $m['datum'] ?? null,
             'summe_pro_jahr' => $b * 365.25 / FREQUENZEN[$freq], 'kategorie' => '—', 'konto' => '',
             'aktiv' => true, 'source' => 'manual', 'override_id' => (int) $m['id'], 'notiz' => $m['notiz'] ?? '',
         ]);
@@ -467,82 +527,194 @@ function recurring_list(bool $onlyActive = false): array
     return $list;
 }
 
+/**
+ * Nächste Fälligkeit eines manuellen Eintrags: ab dem hinterlegten Datum im Rhythmus
+ * weitergerechnet bis in den laufenden Monat (oder später). Ohne Datum: null.
+ */
+function manual_next_due(?string $anchor, string $freq, ?string $today = null): ?string
+{
+    if (!$anchor || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $anchor)) {
+        return null;
+    }
+    $monthStart = (new DateTimeImmutable($today ?? 'today'))->modify('first day of this month')->format('Y-m-d');
+    $d = new DateTimeImmutable($anchor);
+    for ($i = 0; $i < 1000 && $d->format('Y-m-d') < $monthStart; $i++) {
+        $d = $d->modify(FREQ_MODIFY[$freq]);
+    }
+    return $d->format('Y-m-d');
+}
+
+/** Passt eine Buchung zu einem manuellen Eintrag? Empfänger enthält den Namen, Betrag ±25 %. */
+function manual_matches(array $m, string $empf, float $betrag): bool
+{
+    $needle = mb_strtolower(trim($m['empfaenger']));
+    return $needle !== '' && ($betrag < 0) === ($m['betrag'] < 0)
+        && str_contains(mb_strtolower($empf), $needle)
+        && abs(abs($betrag) - abs($m['betrag'])) <= abs($m['betrag']) * FLEX_TOLERANZ;
+}
+
 /** Buchungen nach dem Ende-Datum (für den Hinweis „wieder abgebucht“). */
 function bookings_after_end(array $r): array
 {
     if ($r['source'] !== 'auto' || !$r['ende_datum']) {
         return [];
     }
-    // Empfänger kann selbst "|" enthalten → am letzten Trenner teilen
+    // Schlüssel "empfänger|betrag" bzw. "empfänger|~-" (lange Intervalle, Betrag flexibel)
     $pos = strrpos($r['key'], '|');
     $empf = substr($r['key'], 0, $pos);
-    $rounded = substr($r['key'], $pos + 1);
+    $suffix = substr($r['key'], $pos + 1);
     $rows = db_all("SELECT substr(datum,1,10) AS datum, betrag FROM transactions
                     WHERE ulower(trim(empfaenger)) = ? AND substr(datum,1,10) > ? AND ist_uebertrag = 0
                     ORDER BY datum", [$empf, $r['ende_datum']]);
-    return array_values(array_filter($rows, fn ($x) => (int) round((float) $x['betrag']) === (int) $rounded));
+    if (str_starts_with($suffix, '~')) {
+        $neg = $suffix === '~-';
+        return array_values(array_filter($rows, fn ($x) => ((float) $x['betrag'] < 0) === $neg));
+    }
+    return array_values(array_filter($rows, fn ($x) => (int) round((float) $x['betrag']) === (int) $suffix));
 }
 
 // =============================================================================
 // Monatsprognose
 // =============================================================================
 
-function forecast(array $f): array
+/**
+ * Monatsprognose der Ausgaben, getrennt nach festen und variablen Ausgaben:
+ *
+ *  fest     = bereits gebuchte wiederkehrende Posten (erkannt über Empfänger + Betrag)
+ *             + noch ausstehende wiederkehrende Posten dieses Monats
+ *             (auch jährliche mit Beitragsanpassung und manuelle Einträge mit Fälligkeit)
+ *  variabel = alles andere; Hochrechnung gleitend gewichtet nach Monatsfortschritt:
+ *             Anteil t = Tag/Monatstage aus dem bisherigen Verlauf (linear),
+ *             Anteil 1−t aus dem Median der variablen Ausgaben der letzten 6 Monate.
+ *             Mindestens das bereits Ausgegebene.
+ *
+ * Die Prognose kann so nie unter „bisher + noch erwartet“ liegen. Früher wurde der
+ * Gesamtbetrag (inkl. Miete & Co.) linear hochgerechnet und 50/50 gemittelt – am
+ * Monatsanfang, bevor die Fixkosten abgebucht sind, lag das deutlich zu niedrig.
+ */
+function forecast(array $f, ?string $today = null): array
 {
-    $t = new DateTimeImmutable('today');
+    $t = new DateTimeImmutable($today ?? 'today');
+    $todayStr = $t->format('Y-m-d');
     $ym = $t->format('Y-m');
     $day = (int) $t->format('j');
     $dim = (int) $t->format('t');
     $monthEnd = $t->format('Y-m-t');
+    $first = $t->modify('first day of this month');
 
-    $mf = ['konto' => $f['konto'], 'from' => "$ym-01", 'to' => $monthEnd];
-    [$w, $p] = where_clause($mf, 'category');
-    $r = db_all("SELECT COALESCE(SUM(CASE WHEN betrag>0 THEN betrag END),0) AS ein,
-                        COALESCE(SUM(CASE WHEN betrag<0 THEN -betrag END),0) AS aus
-                 FROM transactions $w", $p)[0];
-    $soFarIn = (float) $r['ein'];
-    $soFarOut = (float) $r['aus'];
-
-    // noch ausstehende wiederkehrende Posten diesen Monat
+    // Wiederkehrende Posten: Schlüssel für "fest", plus noch ausstehende diesen Monat
+    $fixKeys = [];
     $expIn = 0.0;
     $expOut = 0.0;
     $pending = [];
-    foreach (recurring_list(true) as $rc) {
-        if ($rc['source'] !== 'auto' || !$rc['naechstes_datum']) {
+    $manual = [];
+    foreach (recurring_list(true, $todayStr) as $rc) {
+        if (!$rc['naechstes_datum']) {
+            continue;   // manueller Eintrag ohne Fälligkeit
+        }
+        $next = $rc['naechstes_datum'];
+        if ($rc['source'] === 'manual') {
+            // manuelle Einträge haben kein Konto → nur in "Alle Konten"
+            if ($f['konto'] !== '') {
+                continue;
+            }
+            $manual[] = $rc;
+            if ($next >= "$ym-01" && $next <= $monthEnd && days_between($next, $todayStr) <= 10
+                && !manual_booked($rc, $next, $todayStr)) {
+                $pending[] = $rc;
+                $rc['betrag'] < 0 ? $expOut += -$rc['betrag'] : $expIn += $rc['betrag'];
+            }
             continue;
         }
         if ($f['konto'] !== '' && $rc['konto'] !== $f['konto']) {
             continue;
         }
-        $next = $rc['naechstes_datum'];
+        $fixKeys[$rc['key']] = true;
         // überfällig (noch nicht gebucht) oder fällig bis Monatsende
-        if (substr($rc['letztes_datum'], 0, 7) !== $ym && $next <= $monthEnd && days_between($next, $t->format('Y-m-d')) <= 10) {
+        if (substr($rc['letztes_datum'], 0, 7) !== $ym && $next <= $monthEnd && days_between($next, $todayStr) <= 10) {
             $pending[] = $rc;
             $rc['betrag'] < 0 ? $expOut += -$rc['betrag'] : $expIn += $rc['betrag'];
         }
     }
+    $isFix = function (string $empf, float $b) use ($fixKeys, $manual): bool {
+        if (isset($fixKeys[recurring_key($empf, $b)]) || isset($fixKeys[recurring_key_flex($empf, $b)])) {
+            return true;
+        }
+        foreach ($manual as $m) {
+            if (manual_matches($m, $empf, $b)) {
+                return true;
+            }
+        }
+        return false;
+    };
 
-    $linear = $day > 0 ? $soFarOut / $day * $dim : $soFarOut;
-    $recBased = $soFarOut + $expOut;
-    $progOut = 0.5 * $linear + 0.5 * $recBased;
-    $progIn = $soFarIn + $expIn;
+    // Ausgaben eines Zeitraums nach Monat, aufgeteilt in fest/variabel
+    $split = function (string $from, string $to) use ($f, $isFix): array {
+        [$w, $p] = where_clause(['konto' => $f['konto'], 'from' => $from, 'to' => $to], 'category');
+        $out = [];
+        foreach (db_all("SELECT substr(datum,1,7) AS m, empfaenger, betrag FROM transactions $w", $p) as $r) {
+            $out[$r['m']] ??= ['ein' => 0.0, 'aus' => 0.0, 'fix' => 0.0];
+            $b = (float) $r['betrag'];
+            if ($b > 0) {
+                $out[$r['m']]['ein'] += $b;
+            } elseif ($b < 0) {
+                $out[$r['m']]['aus'] += -$b;
+                if ($isFix((string) $r['empfaenger'], $b)) {
+                    $out[$r['m']]['fix'] += -$b;
+                }
+            }
+        }
+        return $out;
+    };
 
-    // 6-Monats-Schnitt der Ausgaben (abgeschlossene Monate mit Daten)
-    $hf = ['konto' => $f['konto'], 'from' => $t->modify('first day of this month')->modify('-6 months')->format('Y-m-d'),
-        'to' => $t->modify('first day of this month')->modify('-1 day')->format('Y-m-d')];
-    [$w, $p] = where_clause($hf, 'category');
-    $hist = db_all("SELECT substr(datum,1,7) AS m, SUM(CASE WHEN betrag<0 THEN -betrag ELSE 0 END) AS aus
-                    FROM transactions $w GROUP BY m", $p);
+    $cur = $split("$ym-01", $monthEnd)[$ym] ?? ['ein' => 0.0, 'aus' => 0.0, 'fix' => 0.0];
+    $soFarIn = $cur['ein'];
+    $soFarOut = $cur['aus'];
+    $fixSoFar = $cur['fix'];
+    $varSoFar = $soFarOut - $fixSoFar;
+
+    // Letzte 6 abgeschlossene Monate mit Daten
+    $hist = $split($first->modify('-6 months')->format('Y-m-d'), $first->modify('-1 day')->format('Y-m-d'));
     $avg6 = $hist ? array_sum(array_column($hist, 'aus')) / count($hist) : null;
+    // Median statt Mittelwert: ein einzelner teurer Monat (Reparatur, Urlaub, nicht
+    // erkannte Jahreszahlung) verzerrt die Schätzung der Folgemonate nicht
+    $varAvg = $hist ? median(array_map(fn ($m) => $m['aus'] - $m['fix'], array_values($hist))) : null;
+
+    $weight = $day / $dim;
+    $varLinear = $varSoFar / $day * $dim;
+    $varProg = $varAvg === null ? $varLinear : $weight * $varLinear + (1 - $weight) * $varAvg;
+    $varProg = max($varProg, $varSoFar);
+
+    $progOut = $fixSoFar + $expOut + $varProg;
+    $progIn = $soFarIn + $expIn;
 
     return [
         'monat' => $ym, 'tag' => $day, 'tage' => $dim,
         'bisher_ein' => $soFarIn, 'bisher_aus' => $soFarOut,
         'erwartet_ein' => $expIn, 'erwartet_aus' => $expOut, 'ausstehend' => $pending,
+        'fix_aus' => $fixSoFar + $expOut, 'variabel_bisher' => $varSoFar, 'variabel_prognose' => $varProg,
+        'variabel_schnitt' => $varAvg,
         'prognose_aus' => $progOut, 'prognose_ein' => $progIn, 'prognose_saldo' => $progIn - $progOut,
         'schnitt6_aus' => $avg6, 'schnitt6_monate' => count($hist),
         'diff_pct' => $avg6 ? ($progOut - $avg6) / $avg6 * 100 : null,
     ];
+}
+
+/** Wurde ein manueller Eintrag rund um seine Fälligkeit (±20 Tage) schon gebucht? */
+function manual_booked(array $m, string $due, string $today): bool
+{
+    $d = new DateTimeImmutable($due);
+    $from = $d->modify('-20 days')->format('Y-m-d');
+    $to = min($d->modify('+20 days')->format('Y-m-d'), $today);
+    $rows = db_all("SELECT empfaenger, betrag FROM transactions
+                    WHERE ist_uebertrag = 0 AND substr(datum,1,10) BETWEEN ? AND ?
+                      AND instr(ulower(empfaenger), ?) > 0", [$from, $to, mb_strtolower(trim($m['empfaenger']))]);
+    foreach ($rows as $r) {
+        if (manual_matches($m, (string) $r['empfaenger'], (float) $r['betrag'])) {
+            return true;
+        }
+    }
+    return false;
 }
 
 // =============================================================================

@@ -403,7 +403,7 @@ function detect_recurring(?string $today = null): array
  *   beendet        – vom Nutzer als gekündigt/beendet markiert
  *   wieder_gebucht – als beendet markiert, aber NACH dem Ende-Datum erneut abgebucht
  */
-function recurring_list(bool $onlyActive = false): array
+function recurring_list(bool $onlyActive = false, ?string $today = null): array
 {
     $hidden = [];
     foreach (db_all("SELECT empfaenger, betrag FROM recurring_overrides WHERE kind = 'hidden'") as $h) {
@@ -438,7 +438,7 @@ function recurring_list(bool $onlyActive = false): array
     };
 
     $list = [];
-    foreach (detect_recurring() as $r) {
+    foreach (detect_recurring($today) as $r) {
         if (isset($hidden[$r['key']])) {
             continue;
         }
@@ -487,58 +487,95 @@ function bookings_after_end(array $r): array
 // Monatsprognose
 // =============================================================================
 
-function forecast(array $f): array
+/**
+ * Monatsprognose der Ausgaben, getrennt nach festen und variablen Ausgaben:
+ *
+ *  fest     = bereits gebuchte wiederkehrende Posten (erkannt über Empfänger + Betrag)
+ *             + noch ausstehende wiederkehrende Posten dieses Monats
+ *  variabel = alles andere; Hochrechnung gleitend gewichtet nach Monatsfortschritt:
+ *             Anteil t = Tag/Monatstage aus dem bisherigen Verlauf (linear),
+ *             Anteil 1−t aus dem Schnitt der variablen Ausgaben der letzten 6 Monate.
+ *             Mindestens das bereits Ausgegebene.
+ *
+ * Die Prognose kann so nie unter „bisher + noch erwartet“ liegen. Früher wurde der
+ * Gesamtbetrag (inkl. Miete & Co.) linear hochgerechnet und 50/50 gemittelt – am
+ * Monatsanfang, bevor die Fixkosten abgebucht sind, lag das deutlich zu niedrig.
+ */
+function forecast(array $f, ?string $today = null): array
 {
-    $t = new DateTimeImmutable('today');
+    $t = new DateTimeImmutable($today ?? 'today');
+    $todayStr = $t->format('Y-m-d');
     $ym = $t->format('Y-m');
     $day = (int) $t->format('j');
     $dim = (int) $t->format('t');
     $monthEnd = $t->format('Y-m-t');
+    $first = $t->modify('first day of this month');
 
-    $mf = ['konto' => $f['konto'], 'from' => "$ym-01", 'to' => $monthEnd];
-    [$w, $p] = where_clause($mf, 'category');
-    $r = db_all("SELECT COALESCE(SUM(CASE WHEN betrag>0 THEN betrag END),0) AS ein,
-                        COALESCE(SUM(CASE WHEN betrag<0 THEN -betrag END),0) AS aus
-                 FROM transactions $w", $p)[0];
-    $soFarIn = (float) $r['ein'];
-    $soFarOut = (float) $r['aus'];
-
-    // noch ausstehende wiederkehrende Posten diesen Monat
+    // Wiederkehrende Posten: Schlüssel für "fest", plus noch ausstehende diesen Monat
+    $fixKeys = [];
     $expIn = 0.0;
     $expOut = 0.0;
     $pending = [];
-    foreach (recurring_list(true) as $rc) {
+    foreach (recurring_list(true, $todayStr) as $rc) {
         if ($rc['source'] !== 'auto' || !$rc['naechstes_datum']) {
             continue;
         }
         if ($f['konto'] !== '' && $rc['konto'] !== $f['konto']) {
             continue;
         }
+        $fixKeys[$rc['key']] = true;
         $next = $rc['naechstes_datum'];
         // überfällig (noch nicht gebucht) oder fällig bis Monatsende
-        if (substr($rc['letztes_datum'], 0, 7) !== $ym && $next <= $monthEnd && days_between($next, $t->format('Y-m-d')) <= 10) {
+        if (substr($rc['letztes_datum'], 0, 7) !== $ym && $next <= $monthEnd && days_between($next, $todayStr) <= 10) {
             $pending[] = $rc;
             $rc['betrag'] < 0 ? $expOut += -$rc['betrag'] : $expIn += $rc['betrag'];
         }
     }
 
-    $linear = $day > 0 ? $soFarOut / $day * $dim : $soFarOut;
-    $recBased = $soFarOut + $expOut;
-    $progOut = 0.5 * $linear + 0.5 * $recBased;
-    $progIn = $soFarIn + $expIn;
+    // Ausgaben eines Zeitraums nach Monat, aufgeteilt in fest/variabel
+    $split = function (string $from, string $to) use ($f, $fixKeys): array {
+        [$w, $p] = where_clause(['konto' => $f['konto'], 'from' => $from, 'to' => $to], 'category');
+        $out = [];
+        foreach (db_all("SELECT substr(datum,1,7) AS m, empfaenger, betrag FROM transactions $w", $p) as $r) {
+            $out[$r['m']] ??= ['ein' => 0.0, 'aus' => 0.0, 'fix' => 0.0];
+            $b = (float) $r['betrag'];
+            if ($b > 0) {
+                $out[$r['m']]['ein'] += $b;
+            } elseif ($b < 0) {
+                $out[$r['m']]['aus'] += -$b;
+                if (isset($fixKeys[recurring_key((string) $r['empfaenger'], $b)])) {
+                    $out[$r['m']]['fix'] += -$b;
+                }
+            }
+        }
+        return $out;
+    };
 
-    // 6-Monats-Schnitt der Ausgaben (abgeschlossene Monate mit Daten)
-    $hf = ['konto' => $f['konto'], 'from' => $t->modify('first day of this month')->modify('-6 months')->format('Y-m-d'),
-        'to' => $t->modify('first day of this month')->modify('-1 day')->format('Y-m-d')];
-    [$w, $p] = where_clause($hf, 'category');
-    $hist = db_all("SELECT substr(datum,1,7) AS m, SUM(CASE WHEN betrag<0 THEN -betrag ELSE 0 END) AS aus
-                    FROM transactions $w GROUP BY m", $p);
+    $cur = $split("$ym-01", $monthEnd)[$ym] ?? ['ein' => 0.0, 'aus' => 0.0, 'fix' => 0.0];
+    $soFarIn = $cur['ein'];
+    $soFarOut = $cur['aus'];
+    $fixSoFar = $cur['fix'];
+    $varSoFar = $soFarOut - $fixSoFar;
+
+    // Letzte 6 abgeschlossene Monate mit Daten
+    $hist = $split($first->modify('-6 months')->format('Y-m-d'), $first->modify('-1 day')->format('Y-m-d'));
     $avg6 = $hist ? array_sum(array_column($hist, 'aus')) / count($hist) : null;
+    $varAvg = $hist ? array_sum(array_map(fn ($m) => $m['aus'] - $m['fix'], $hist)) / count($hist) : null;
+
+    $weight = $day / $dim;
+    $varLinear = $varSoFar / $day * $dim;
+    $varProg = $varAvg === null ? $varLinear : $weight * $varLinear + (1 - $weight) * $varAvg;
+    $varProg = max($varProg, $varSoFar);
+
+    $progOut = $fixSoFar + $expOut + $varProg;
+    $progIn = $soFarIn + $expIn;
 
     return [
         'monat' => $ym, 'tag' => $day, 'tage' => $dim,
         'bisher_ein' => $soFarIn, 'bisher_aus' => $soFarOut,
         'erwartet_ein' => $expIn, 'erwartet_aus' => $expOut, 'ausstehend' => $pending,
+        'fix_aus' => $fixSoFar + $expOut, 'variabel_bisher' => $varSoFar, 'variabel_prognose' => $varProg,
+        'variabel_schnitt' => $varAvg,
         'prognose_aus' => $progOut, 'prognose_ein' => $progIn, 'prognose_saldo' => $progIn - $progOut,
         'schnitt6_aus' => $avg6, 'schnitt6_monate' => count($hist),
         'diff_pct' => $avg6 ? ($progOut - $avg6) / $avg6 * 100 : null,

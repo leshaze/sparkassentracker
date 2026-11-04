@@ -231,8 +231,8 @@ if ($action !== '') {
                 } else {
                     $b = abs($b);
                 }
-                db_exec("INSERT INTO recurring_overrides (empfaenger, betrag, frequenz, kind, notiz) VALUES (?, ?, ?, 'manual', ?)",
-                    [post('empfaenger'), $b, post('frequenz'), post('notiz') ?: null]);
+                db_exec("INSERT INTO recurring_overrides (empfaenger, betrag, frequenz, kind, notiz, datum) VALUES (?, ?, ?, 'manual', ?, ?)",
+                    [post('empfaenger'), $b, post('frequenz'), post('notiz') ?: null, parse_input_date(post('faellig'))]);
                 flash('Wiederkehrende Zahlung „' . post('empfaenger') . '“ hinzugefügt.');
                 break;
             case 'rec_note':

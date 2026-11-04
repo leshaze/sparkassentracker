@@ -30,6 +30,7 @@ $renderRows = function (array $rows, string $mode) use ($endButton) { ?>
                 <td>
                     <div class="empf"><?= h($r['empfaenger']) ?>
                         <?php if ($r['source'] === 'manual'): ?><span class="badge">manuell</span><?php endif; ?>
+                        <?php if (!empty($r['flex'])): ?><span class="badge" title="Betrag hat sich geändert – es zählt die letzte Zahlung">Betrag angepasst</span><?php endif; ?>
                         <?php if ($r['status'] === 'wieder_gebucht'): ?><span class="badge alert">trotz Kündigung abgebucht</span><?php endif; ?>
                     </div>
                     <div class="muted small"><?= h($r['kategorie']) ?><?= $r['anzahl'] ? ' · ' . $r['anzahl'] . '× gebucht' : '' ?><?= $r['konto'] ? ' · ' . h($r['konto']) : '' ?></div>
@@ -115,7 +116,7 @@ $renderRows = function (array $rows, string $mode) use ($endButton) { ?>
 </section>
 
 <section class="card flush">
-    <div class="card-head pad"><h2>Aktiv</h2><span class="muted">Erkannt ab 3 Buchungen im festen Rhythmus (jährlich ab 2)</span></div>
+    <div class="card-head pad"><h2>Aktiv</h2><span class="muted">Erkannt ab 3 Buchungen im festen Rhythmus (halbjährlich/jährlich ab 2; bei langen Rhythmen darf sich der Betrag um bis zu 25 % ändern)</span></div>
     <?php if ($active): $renderRows($active, 'aktiv'); else: ?><p class="muted pad">Keine aktiven wiederkehrenden Zahlungen.</p><?php endif; ?>
 </section>
 
@@ -142,7 +143,12 @@ $renderRows = function (array $rows, string $mode) use ($endButton) { ?>
 <div class="grid-2">
     <section class="card">
         <h2>Manuell hinzufügen</h2>
-        <p class="muted small">Für Posten, die nicht automatisch erkannt werden (z.B. jährliche Versicherung über ein anderes Konto).</p>
+        <p class="muted small">
+            Für Posten, die nicht automatisch erkannt werden – z.&nbsp;B. eine jährliche Versicherung, solange erst
+            ein Jahr importiert ist. Mit Fälligkeit zählt der Eintrag in der Monatsprognose. Den Empfänger so
+            eintragen, wie er im Umsatz steht (ein Teil reicht, z.&nbsp;B. „HUK“): dann erkennt die Prognose,
+            wenn die Zahlung schon abgebucht wurde.
+        </p>
         <form method="post" class="form-grid">
             <?= form_fields('rec_manual_add') ?>
             <label class="span-2">Empfänger <input type="text" name="empfaenger" required></label>
@@ -157,7 +163,8 @@ $renderRows = function (array $rows, string $mode) use ($endButton) { ?>
                     <?php endforeach; ?>
                 </select>
             </label>
-            <label>Notiz <input type="text" name="notiz"></label>
+            <label>Nächste Fälligkeit <input type="date" name="faellig"></label>
+            <label class="span-2">Notiz <input type="text" name="notiz"></label>
             <div class="span-2"><button class="btn primary" type="submit">Hinzufügen</button></div>
         </form>
     </section>

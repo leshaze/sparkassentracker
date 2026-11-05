@@ -49,6 +49,13 @@ $chips = function (string $cat, string $sub, array $kws) { ?>
 </div>
 
 <section class="card">
+    <p class="muted small">
+        <strong>Sparen statt Ausgabe:</strong> Bei einer Kategorie den Haken „Zählt als Sparen“ setzen, wenn das
+        Geld eine Rücklage bleibt, auf die du bei Bedarf zurückgreifst (z.&nbsp;B. Tagesgeld). Einzahlungen sind
+        dann keine Ausgabe, Entnahmen keine Einnahme, und die Übersicht zeigt deinen echten Überschuss bzw.
+        Fehlbetrag. Depot, Bausparen &amp; Co. bleiben ohne Haken normale Ausgaben.
+        <?= $spar ? 'Aktuell als Sparen markiert: <strong>' . h(implode(', ', $spar)) . '</strong>.' : 'Aktuell ist keine Kategorie als Sparen markiert.' ?>
+    </p>
     <form method="post" class="row-form">
         <?= form_fields('cat_add') ?>
         <label class="field grow"><span>Neue Kategorie</span><input type="text" name="name" required placeholder="z.B. Haustier"></label>
@@ -62,11 +69,22 @@ $chips = function (string $cat, string $sub, array $kws) { ?>
         <summary>
             <span class="chev" aria-hidden="true"></span>
             <strong><?= h($cat) ?></strong>
+            <?php if (in_array($cat, $spar, true)): ?><span class="badge save" title="Zählt als Sparen, nicht als Ausgabe/Einnahme">Sparen</span><?php endif; ?>
             <span class="muted small"><?= count($e['_keywords']) + array_sum(array_map('count', $e['subs'])) ?> Stichworte<?= $e['subs'] ? ' · ' . count($e['subs']) . ' Unterkategorien' : '' ?></span>
             <span class="spacer"></span>
             <a class="muted small" href="?p=umsaetze&amp;kat=<?= urlencode($cat) ?>"><?= number_format($counts[$cat] ?? 0, 0, ',', '.') ?> Umsätze</a>
         </summary>
         <div class="rule-body">
+            <form method="post" class="row-form spar-toggle" data-autosubmit>
+                <?= form_fields('cat_spar') ?>
+                <input type="hidden" name="cat" value="<?= h($cat) ?>">
+                <input type="hidden" name="spar" value="0">
+                <label class="check">
+                    <input type="checkbox" name="spar" value="1" <?= in_array($cat, $spar, true) ? 'checked' : '' ?>>
+                    Zählt als <strong>Sparen</strong> (Vermögensaufbau) – Einzahlungen sind keine Ausgabe, Entnahmen keine Einnahme
+                </label>
+                <noscript><button class="btn small" type="submit">Speichern</button></noscript>
+            </form>
             <div class="rule-block">
                 <div class="rule-label">Stichworte (ohne Unterkategorie)</div>
                 <?php $chips($cat, '', $e['_keywords']); ?>

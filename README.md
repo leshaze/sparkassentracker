@@ -14,6 +14,10 @@ z. B. `http://recordloom.local/tracker/`, und nutzt dessen PHP-FPM mit.
   Teile vorkommen, und haben Vorrang (z. B. für PayPal-Zahlungen an verschiedene Händler)
 - Übertragserkennung zwischen eigenen Konten (Fenster 14 Tage, `config.php`)
 - Konto- und Zeitraumfilter, Kategorie-Auswertung mit Unterkategorien, Monatsverlauf
+- Spar-Kategorien (auf der Kategorien-Seite per Haken „Zählt als Sparen“, standardmäßig keine):
+  z. B. Einzahlungen aufs Tagesgeld zählen nicht als Ausgabe, Entnahmen nicht als Einnahme. Die
+  Übersicht zeigt dann den echten Überschuss/Fehlbetrag, „Gespart (netto)“ und eine Aufteilung
+  nach Unterkategorie. Depot, Bausparen usw. bleiben ohne Haken normale Ausgaben
 - Wiederkehrende Zahlungen (auto + manuell, ausblenden, Notizen)
 - Monatsprognose, Insights (6 Heuristiken), Vorjahresvergleich
 - Umsatz bearbeiten: Kategorie, Notiz, Übertrag, direkt als Regel speichern

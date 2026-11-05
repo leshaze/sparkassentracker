@@ -54,7 +54,7 @@
     <p class="hint">
         Prognose = feste Ausgaben (wiederkehrende Posten: <?= fmt_eur($fc['fix_aus']) ?>, gebucht + noch ausstehend)
         + variable Ausgaben (≈ <?= fmt_eur($fc['variabel_prognose']) ?>, bisher <?= fmt_eur($fc['variabel_bisher']) ?><?php if ($fc['variabel_schnitt'] !== null): ?>,
-        Median <?= $fc['schnitt6_monate'] ?> Monate <?= fmt_eur($fc['variabel_schnitt']) ?><?php endif; ?>).
+        Median der Vormonate <?= fmt_eur($fc['variabel_schnitt']) ?> – dort sind Ø <?= fmt_eur($fc['fix_schnitt']) ?> Fixkosten pro Monat bereits herausgerechnet<?php endif; ?>).
         Die variablen Ausgaben werden am Monatsanfang vor allem aus dem Median der Vormonate geschätzt, gegen Monatsende
         zunehmend aus dem bisherigen Verlauf. Überträge zählen nicht mit.
     </p>

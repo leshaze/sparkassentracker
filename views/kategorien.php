@@ -49,6 +49,13 @@ $chips = function (string $cat, string $sub, array $kws) { ?>
 </div>
 
 <section class="card">
+    <p class="muted small">
+        <strong>Sparen statt Ausgabe:</strong> Bei einer Kategorie den Haken „Zählt als Sparen“ setzen, wenn das
+        Geld eine Rücklage bleibt, auf die du bei Bedarf zurückgreifst (z.&nbsp;B. Tagesgeld). Einzahlungen sind
+        dann keine Ausgabe, Entnahmen keine Einnahme, und die Übersicht zeigt deinen echten Überschuss bzw.
+        Fehlbetrag. Depot, Bausparen &amp; Co. bleiben ohne Haken normale Ausgaben.
+        <?= $spar ? 'Aktuell als Sparen markiert: <strong>' . h(implode(', ', $spar)) . '</strong>.' : 'Aktuell ist keine Kategorie als Sparen markiert.' ?>
+    </p>
     <form method="post" class="row-form">
         <?= form_fields('cat_add') ?>
         <label class="field grow"><span>Neue Kategorie</span><input type="text" name="name" required placeholder="z.B. Haustier"></label>

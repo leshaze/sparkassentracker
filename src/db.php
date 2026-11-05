@@ -140,15 +140,16 @@ function setting_set(string $key, $value): void
 }
 
 /**
- * Kategorien, deren Buchungen als Sparen / Vermögensaufbau zählen statt als Ausgabe bzw.
- * Einnahme (Tagesgeld, Sparplan, Depot, Bausparen …). Standard: „Sparen & Anlage“.
+ * Kategorien, deren Buchungen als Sparen / Rücklage zählen statt als Ausgabe bzw. Einnahme
+ * (typisch: Tagesgeld, von dem bei Bedarf wieder entnommen wird). Standard: keine – Depot,
+ * Bausparen usw. bleiben Ausgaben, solange der Nutzer keine Kategorie markiert.
  */
 function spar_kategorien(bool $reload = false): array
 {
     static $cache = null;
     if ($reload || $cache === null) {
         $v = setting_get('spar_kategorien');
-        $cache = is_array($v) ? array_values(array_filter($v, 'is_string')) : ['Sparen & Anlage'];
+        $cache = is_array($v) ? array_values(array_filter($v, 'is_string')) : [];
     }
     return $cache;
 }

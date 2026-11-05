@@ -54,6 +54,10 @@ function db(): PDO
             kind       TEXT,
             notiz      TEXT
         );
+        CREATE TABLE IF NOT EXISTS einstellungen (
+            schluessel TEXT PRIMARY KEY,
+            wert       TEXT
+        );
         CREATE TABLE IF NOT EXISTS recurring_notes (
             schluessel TEXT PRIMARY KEY,
             notiz      TEXT
@@ -119,6 +123,43 @@ function tx_hash(string $konto, string $datum, float $betrag, string $empf, stri
         mb_strtolower(trim($btext)),
     ]);
     return hash('sha256', $raw);
+}
+
+function setting_get(string $key, $default = null)
+{
+    $v = db_one('SELECT wert FROM einstellungen WHERE schluessel = ?', [$key]);
+    return $v === null ? $default : json_decode((string) $v, true);
+}
+
+function setting_set(string $key, $value): void
+{
+    db_exec('INSERT INTO einstellungen (schluessel, wert) VALUES (?, ?)
+             ON CONFLICT(schluessel) DO UPDATE SET wert = excluded.wert',
+        [$key, json_encode($value, JSON_UNESCAPED_UNICODE)]);
+    spar_kategorien(true);
+}
+
+/**
+ * Kategorien, deren Buchungen als Sparen / Vermögensaufbau zählen statt als Ausgabe bzw.
+ * Einnahme (Tagesgeld, Sparplan, Depot, Bausparen …). Standard: „Sparen & Anlage“.
+ */
+function spar_kategorien(bool $reload = false): array
+{
+    static $cache = null;
+    if ($reload || $cache === null) {
+        $v = setting_get('spar_kategorien');
+        $cache = is_array($v) ? array_values(array_filter($v, 'is_string')) : ['Sparen & Anlage'];
+    }
+    return $cache;
+}
+
+function set_spar_kategorie(string $cat, bool $on): void
+{
+    $list = array_values(array_diff(spar_kategorien(), [$cat]));
+    if ($on && $cat !== '') {
+        $list[] = $cat;
+    }
+    setting_set('spar_kategorien', $list);
 }
 
 function konten(): array

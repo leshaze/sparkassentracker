@@ -73,8 +73,13 @@ function resolve_period(string $preset, string $von, string $bis): array
  *                    bei Einzelkonto beide Seiten zeigen (korrekter Saldo)
  *  mode 'category' : Kategorie-Auswertungen – Überträge immer raus
  *  mode 'list'     : wie 'values', außer Überträge werden explizit eingeblendet
+ *
+ * $savings: Buchungen in Spar-Kategorien (spar_kategorien()) sind Vermögensaufbau,
+ *  weder Ausgabe noch Einnahme.
+ *  'auto'    : bei 'values'/'category' ausblenden, bei 'list' zeigen
+ *  'only'    : nur Spar-Buchungen (für „Gespart“)
  */
-function where_clause(array $f, string $mode = 'values', bool $showTransfers = false): array
+function where_clause(array $f, string $mode = 'values', bool $showTransfers = false, string $savings = 'auto'): array
 {
     $w = [];
     $p = [];
@@ -95,8 +100,16 @@ function where_clause(array $f, string $mode = 'values', bool $showTransfers = f
         'list'     => $f['konto'] === '' && !$showTransfers,
         default    => $f['konto'] === '',
     };
-    if ($hideTransfers) {
+    if ($hideTransfers || $savings === 'only') {
         $w[] = 'ist_uebertrag = 0';
+    }
+    $spar = spar_kategorien();
+    if ($savings === 'only') {
+        $w[] = $spar ? 'kategorie IN (' . implode(',', array_fill(0, count($spar), '?')) . ')' : '0';
+        array_push($p, ...$spar);
+    } elseif ($spar && $mode !== 'list') {
+        $w[] = "COALESCE(kategorie,'') NOT IN (" . implode(',', array_fill(0, count($spar), '?')) . ')';
+        array_push($p, ...$spar);
     }
     return [$w ? 'WHERE ' . implode(' AND ', $w) : '', $p];
 }
@@ -113,7 +126,43 @@ function totals(array $f): array
             COALESCE(SUM(CASE WHEN betrag < 0 THEN betrag END),0) AS aus,
             COUNT(*) AS n
         FROM transactions $w", $p)[0];
-    return ['ein' => (float) $r['ein'], 'aus' => (float) $r['aus'], 'saldo' => (float) $r['ein'] + (float) $r['aus'], 'n' => (int) $r['n']];
+    $saldo = (float) $r['ein'] + (float) $r['aus'];
+    $gespart = null;
+    if (spar_kategorien()) {
+        [$sw, $sp] = where_clause($f, 'values', false, 'only');
+        $gespart = (float) db_one("SELECT COALESCE(-SUM(betrag),0) FROM transactions $sw", $sp);
+    }
+    return [
+        'ein'     => (float) $r['ein'],
+        'aus'     => (float) $r['aus'],
+        'saldo'   => $saldo,                                   // Überschuss/Fehlbetrag ohne Sparen
+        'gespart' => $gespart,                                 // netto: Einzahlungen − Entnahmen
+        'konto_veraenderung' => $saldo - (float) $gespart,     // was auf den Konten übrig bleibt
+        'n'       => (int) $r['n'],
+    ];
+}
+
+/**
+ * Spar-Buchungen nach Unterkategorie (Tagesgeld, Depot, Bausparen …):
+ * eingezahlt, entnommen, netto. Leer, wenn keine Spar-Kategorie eingestellt ist.
+ */
+function savings_breakdown(array $f): array
+{
+    if (!spar_kategorien()) {
+        return [];
+    }
+    [$w, $p] = where_clause($f, 'values', false, 'only');
+    $rows = db_all("SELECT kategorie AS kat, COALESCE(NULLIF(unterkategorie,''),'') AS sub,
+            COALESCE(SUM(CASE WHEN betrag < 0 THEN -betrag END),0) AS ein,
+            COALESCE(SUM(CASE WHEN betrag > 0 THEN betrag END),0) AS raus,
+            COUNT(*) AS n
+        FROM transactions $w GROUP BY kat, sub", $p);
+    $out = array_map(fn ($r) => [
+        'kategorie' => $r['kat'], 'sub' => $r['sub'], 'eingezahlt' => (float) $r['ein'],
+        'entnommen' => (float) $r['raus'], 'netto' => (float) $r['ein'] - (float) $r['raus'], 'n' => (int) $r['n'],
+    ], $rows);
+    usort($out, fn ($a, $b) => $b['netto'] <=> $a['netto']);
+    return $out;
 }
 
 function monthly_series(array $f): array
@@ -123,12 +172,19 @@ function monthly_series(array $f): array
             SUM(CASE WHEN betrag > 0 THEN betrag ELSE 0 END) AS ein,
             SUM(CASE WHEN betrag < 0 THEN -betrag ELSE 0 END) AS aus
         FROM transactions $w GROUP BY m ORDER BY m", $p);
+    $gespart = [];
+    if (spar_kategorien()) {
+        [$sw, $sp] = where_clause($f, 'values', false, 'only');
+        foreach (db_all("SELECT substr(datum,1,7) AS m, -SUM(betrag) AS s FROM transactions $sw GROUP BY m", $sp) as $g) {
+            $gespart[$g['m']] = round((float) $g['s'], 2);
+        }
+    }
     return array_map(fn ($r) => [
         'monat' => $r['m'],
         'ein'   => round((float) $r['ein'], 2),
         'aus'   => round((float) $r['aus'], 2),
         'saldo' => round((float) $r['ein'] - (float) $r['aus'], 2),
-    ], $rows);
+    ] + ($gespart ? ['gespart' => $gespart[$r['m']] ?? 0.0] : []), $rows);
 }
 
 /** Ausgaben (oder Einnahmen) nach Kategorie mit Unterkategorien. */
@@ -717,7 +773,17 @@ function forecast(array $f, ?string $today = null): array
     $expOut = 0.0;
     $pending = [];
     $seen = [];
-    $active = array_filter($all, fn ($rc) => $rc['aktiv'] && $rc['naechstes_datum']);
+    // Sparraten (Spar-Kategorien) sind keine Ausgaben – getrennt ausweisen
+    $spar = spar_kategorien();
+    $sparPending = 0.0;
+    foreach ($all as $rc) {
+        if (in_array($rc['kategorie'], $spar, true) && $rc['aktiv'] && $rc['naechstes_datum']
+            && $rc['naechstes_datum'] <= $monthEnd && days_between($rc['naechstes_datum'], $todayStr) <= 10
+            && (!$rc['letztes_datum'] || substr($rc['letztes_datum'], 0, 7) !== $ym)) {
+            $sparPending += -$rc['betrag'];
+        }
+    }
+    $active = array_filter($all, fn ($rc) => $rc['aktiv'] && $rc['naechstes_datum'] && !in_array($rc['kategorie'], $spar, true));
     usort($active, fn ($x, $y) => strcmp((string) $y['letztes_datum'], (string) $x['letztes_datum']));
     foreach ($active as $rc) {
         $next = $rc['naechstes_datum'];
@@ -776,6 +842,8 @@ function forecast(array $f, ?string $today = null): array
         'erwartet_ein' => $expIn, 'erwartet_aus' => $expOut, 'ausstehend' => $pending,
         'fix_aus' => $fixSoFar + $expOut, 'variabel_bisher' => $varSoFar, 'variabel_prognose' => $varProg,
         'variabel_schnitt' => $varAvg, 'fix_schnitt' => $fixAvg,
+        'sparen_bisher' => $spar ? (float) totals(['konto' => $f['konto'], 'from' => "$ym-01", 'to' => $monthEnd])['gespart'] : null,
+        'sparen_erwartet' => $sparPending,
         'prognose_aus' => $progOut, 'prognose_ein' => $progIn, 'prognose_saldo' => $progIn - $progOut,
         'schnitt6_aus' => $avg6, 'schnitt6_monate' => count($hist),
         'diff_pct' => $avg6 ? ($progOut - $avg6) / $avg6 * 100 : null,
@@ -862,6 +930,7 @@ function insights(array $f): array
 
     // 2. Top-5-Abos nach Jahressumme
     $rec = array_values(array_filter(recurring_list(true), fn ($r) => $r['betrag'] < 0
+        && !in_array($r['kategorie'], spar_kategorien(), true)
         && ($konto === '' || $r['source'] === 'manual' || $r['konto'] === $konto)));
     if ($rec) {
         $sumYear = -array_sum(array_column($rec, 'summe_pro_jahr'));

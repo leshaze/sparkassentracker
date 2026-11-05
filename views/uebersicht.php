@@ -38,6 +38,9 @@
         <div class="kpi">
             <span class="kpi-label">Saldo Monatsende</span>
             <span class="kpi-value <?= amount_class($fc['prognose_saldo']) ?>">≈ <?= fmt_eur($fc['prognose_saldo'], true) ?></span>
+            <?php if ($fc['sparen_bisher'] !== null && ($fc['sparen_bisher'] || $fc['sparen_erwartet'])): ?>
+                <span class="kpi-sub">vor Sparen · Sparraten <?= fmt_eur($fc['sparen_bisher'] + $fc['sparen_erwartet']) ?><?= $fc['sparen_erwartet'] ? ' (davon ' . fmt_eur($fc['sparen_erwartet']) . ' noch erwartet)' : '' ?></span>
+            <?php endif; ?>
         </div>
     </div>
     <?php if ($fc['ausstehend']): ?>
@@ -56,7 +59,7 @@
         + variable Ausgaben (≈ <?= fmt_eur($fc['variabel_prognose']) ?>, bisher <?= fmt_eur($fc['variabel_bisher']) ?><?php if ($fc['variabel_schnitt'] !== null): ?>,
         Median der Vormonate <?= fmt_eur($fc['variabel_schnitt']) ?> – dort sind Ø <?= fmt_eur($fc['fix_schnitt']) ?> Fixkosten pro Monat bereits herausgerechnet<?php endif; ?>).
         Die variablen Ausgaben werden am Monatsanfang vor allem aus dem Median der Vormonate geschätzt, gegen Monatsende
-        zunehmend aus dem bisherigen Verlauf. Überträge zählen nicht mit.
+        zunehmend aus dem bisherigen Verlauf. Überträge und Sparen zählen nicht mit.
     </p>
 </section>
 
@@ -64,20 +67,30 @@
     <div class="card kpi">
         <span class="kpi-label">Einnahmen</span>
         <span class="kpi-value pos"><?= fmt_eur($totals['ein']) ?></span>
+        <?php if ($totals['gespart'] !== null): ?><span class="kpi-sub">ohne Entnahmen aus Erspartem</span><?php endif; ?>
     </div>
     <div class="card kpi">
         <span class="kpi-label">Ausgaben</span>
         <span class="kpi-value neg"><?= fmt_eur($totals['aus']) ?></span>
+        <?php if ($totals['gespart'] !== null): ?><span class="kpi-sub">ohne Sparen</span><?php endif; ?>
     </div>
     <div class="card kpi">
-        <span class="kpi-label">Saldo</span>
+        <span class="kpi-label"><?= $totals['saldo'] < 0 ? 'Fehlbetrag' : 'Überschuss' ?></span>
         <span class="kpi-value <?= amount_class($totals['saldo']) ?>"><?= fmt_eur($totals['saldo'], true) ?></span>
+        <span class="kpi-sub"><?= number_format($totals['n'], 0, ',', '.') ?> Umsätze · <?= $f['konto'] === '' ? 'Überträge zwischen Konten ausgeblendet' : 'inkl. Überträge' ?></span>
     </div>
-    <div class="card kpi">
-        <span class="kpi-label">Umsätze</span>
-        <span class="kpi-value"><?= number_format($totals['n'], 0, ',', '.') ?></span>
-        <span class="kpi-sub"><?= $f['konto'] === '' ? 'Überträge zwischen Konten ausgeblendet' : 'inkl. Überträge (für korrekten Saldo)' ?></span>
-    </div>
+    <?php if ($totals['gespart'] !== null): ?>
+        <div class="card kpi">
+            <span class="kpi-label">Gespart (netto)</span>
+            <span class="kpi-value <?= $totals['gespart'] < 0 ? 'neg' : '' ?>"><?= fmt_eur($totals['gespart'], true) ?></span>
+            <span class="kpi-sub">Kontoveränderung <?= fmt_eur($totals['konto_veraenderung'], true) ?><?= $totals['gespart'] < 0 ? ' · mehr entnommen als eingezahlt' : '' ?></span>
+        </div>
+    <?php else: ?>
+        <div class="card kpi">
+            <span class="kpi-label">Umsätze</span>
+            <span class="kpi-value"><?= number_format($totals['n'], 0, ',', '.') ?></span>
+        </div>
+    <?php endif; ?>
 </section>
 
 <?php if ($monthly): ?>
@@ -118,3 +131,29 @@
         <?php endif; ?>
     </section>
 </div>
+
+<?php if ($sparen): ?>
+<section class="card">
+    <div class="card-head">
+        <h2>Sparen &amp; Vermögensaufbau</h2>
+        <span class="muted">netto <?= fmt_eur(array_sum(array_column($sparen, 'netto')), true) ?></span>
+    </div>
+    <div class="table-scroll">
+        <table>
+            <thead><tr><th>Wohin</th><th class="num">Eingezahlt</th><th class="num">Entnommen</th><th class="num">Netto</th></tr></thead>
+            <tbody>
+            <?php foreach ($sparen as $sp): $kq = $sp['kategorie'] . ($sp['sub'] !== '' ? '::' . $sp['sub'] : ''); ?>
+                <tr>
+                    <td><a href="?p=umsaetze&amp;kat=<?= urlencode($kq) ?>"><?= h($sp['sub'] !== '' ? $sp['sub'] : $sp['kategorie'] . ' (ohne Unterkategorie)') ?></a>
+                        <?php if (count(array_unique(array_column($sparen, 'kategorie'))) > 1): ?><span class="muted small">· <?= h($sp['kategorie']) ?></span><?php endif; ?></td>
+                    <td class="num"><?= fmt_eur($sp['eingezahlt']) ?></td>
+                    <td class="num"><?= $sp['entnommen'] ? fmt_eur(-$sp['entnommen']) : '—' ?></td>
+                    <td class="num <?= $sp['netto'] < 0 ? 'neg' : '' ?>"><?= fmt_eur($sp['netto'], true) ?></td>
+                </tr>
+            <?php endforeach; ?>
+            </tbody>
+        </table>
+    </div>
+    <p class="hint">Buchungen in Spar-Kategorien (<?= h(implode(', ', spar_kategorien())) ?>) zählen nicht als Ausgabe oder Einnahme, sondern als Vermögensaufbau. Einstellbar auf der Seite <a href="?p=kategorien">Kategorien</a>.</p>
+</section>
+<?php endif; ?>

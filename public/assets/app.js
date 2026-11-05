@@ -152,7 +152,7 @@
     const v = (n) => css.getPropertyValue(n).trim();
     const dark = matchMedia('(prefers-color-scheme: dark)').matches;
     const ink2 = v('--ink-2'), muted = v('--muted'), line = v('--line-2'), surface = v('--surface');
-    const POS = '#2ecc71', NEG = '#e74c3c';
+    const POS = '#2ecc71', NEG = '#e74c3c', SAVE = v('--save') || '#2a78d6';
     // Kategoriale Reihenfolge (fest, nie gecycelt) – hell/dunkel validiert
     const CAT = dark
         ? ['#3987e5', '#d95926', '#199e70', '#c98500', '#d55181', '#008300', '#9085e9']
@@ -192,7 +192,9 @@
                           borderRadius: 4, borderSkipped: 'start', maxBarThickness: 22, categoryPercentage: .7, barPercentage: .9 },
                         { type: 'bar', label: 'Ausgaben', data: data.map((d) => d.aus), backgroundColor: NEG,
                           borderRadius: 4, borderSkipped: 'start', maxBarThickness: 22, categoryPercentage: .7, barPercentage: .9 },
-                        { type: 'line', label: 'Saldo', data: data.map((d) => d.saldo), borderColor: v('--ink'),
+                        ...(data.some((d) => 'gespart' in d) ? [{ type: 'bar', label: 'Gespart', data: data.map((d) => d.gespart), backgroundColor: SAVE,
+                          borderRadius: 4, borderSkipped: 'start', maxBarThickness: 22, categoryPercentage: .7, barPercentage: .9 }] : []),
+                        { type: 'line', label: data.some((d) => 'gespart' in d) ? 'Überschuss' : 'Saldo', data: data.map((d) => d.saldo), borderColor: v('--ink'),
                           backgroundColor: v('--ink'), borderWidth: 2, pointRadius: 3, pointHoverRadius: 5,
                           pointBorderColor: surface, pointBorderWidth: 2, tension: .25 },
                     ],

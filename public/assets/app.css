@@ -16,6 +16,7 @@
     --neg: #c0392b;          /* Text-Variante von #e74c3c */
     --pos-chart: #2ecc71;
     --neg-chart: #e74c3c;
+    --save: #2a78d6;         /* Sparen / Vermögensaufbau */
     --warn: #b9770e;
     --warn-soft: #fdf3e1;
     --high-soft: #fbe9e7;
@@ -42,6 +43,7 @@
         --accent-soft: #1f2d3d;
         --pos: #2ecc71;
         --neg: #e74c3c;
+        --save: #3987e5;
         --warn: #f0b252;
         --warn-soft: #33291a;
         --high-soft: #3a2220;
@@ -55,7 +57,7 @@
 :root[data-theme="dark"] {
     --bg: #12151b; --surface: #1a1f27; --surface-2: #20262f; --ink: #e7eaf0; --ink-2: #c0c6d1;
     --muted: #8d96a5; --line: #2c333e; --line-2: #252b35; --accent: #6ea8dc; --accent-ink: #0d1520;
-    --accent-soft: #1f2d3d; --pos: #2ecc71; --neg: #e74c3c; --warn: #f0b252; --warn-soft: #33291a;
+    --accent-soft: #1f2d3d; --pos: #2ecc71; --neg: #e74c3c; --save: #3987e5; --warn: #f0b252; --warn-soft: #33291a;
     --high-soft: #3a2220; --info-soft: #232a34; --transfer: #a29bfe; --shadow: none; color-scheme: dark;
 }
 
@@ -396,3 +398,6 @@ body.bare .wrap { display: grid; place-items: center; min-height: 100vh; padding
 .login-card { width: min(380px, 100%); padding: 26px 24px; }
 
 code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .9em; background: var(--surface-2); padding: 0 .3em; border-radius: 4px; }
+
+.badge.save { background: color-mix(in srgb, var(--save) 15%, transparent); color: var(--save); }
+.spar-toggle { margin: 0 0 .75rem; }

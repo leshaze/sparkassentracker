@@ -169,12 +169,19 @@ if ($action !== '') {
             case 'cat_delete':
                 $rules->deleteCategory(post('cat'));
                 $rules->save();
+                set_spar_kategorie(post('cat'), false);
                 flash('Kategorie gelöscht. Betroffene Umsätze werden beim Neu-Kategorisieren zugeordnet.');
                 break;
             case 'sub_delete':
                 $rules->deleteSub(post('cat'), post('sub'));
                 $rules->save();
                 flash('Unterkategorie gelöscht.');
+                break;
+            case 'cat_spar':
+                set_spar_kategorie(post('cat'), post('spar') === '1');
+                flash(post('spar') === '1'
+                    ? '„' . post('cat') . '“ zählt jetzt als Sparen – nicht mehr als Ausgabe/Einnahme.'
+                    : '„' . post('cat') . '“ zählt wieder als normale Ausgabe/Einnahme.');
                 break;
             case 'recategorize':
                 $n = recategorize_all($rules, post('alle') === '1');
@@ -321,6 +328,7 @@ switch ($page) {
             'aus'      => category_breakdown($f),
             'ein'      => category_breakdown($f, true),
             'forecast' => forecast($f),
+            'sparen'   => savings_breakdown($f),
         ];
         break;
 
@@ -390,6 +398,7 @@ switch ($page) {
             $vars['counts'][$r['k']] = (int) $r['n'];
         }
         $vars['manual'] = (int) db_one('SELECT COUNT(*) FROM transactions WHERE kategorie_manuell = 1');
+        $vars['spar'] = spar_kategorien();
         break;
 
     case 'import':

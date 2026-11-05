@@ -42,13 +42,20 @@ function read_sparkasse_csv(string $raw): array
     $isCreditCard = (bool) array_intersect(['buchungsbetrag', 'transaktionsbeschreibung', 'belegdatum'], $lower);
 
     $rows = $isCreditCard ? parse_creditcard($header, $lines) : parse_giro($header, $lines);
-    $valid = array_values(array_filter($rows, fn ($r) => $r['datum'] !== null));
 
+    // Vorgemerkte Umsätze (Spalte "Info" = "Umsatz vorgemerkt") nicht übernehmen: sie stehen
+    // im nächsten Export als gebuchte Umsätze, oft mit anderem Buchungstag – würden sie jetzt
+    // importiert, entstünden später Dubletten.
+    $booked = array_values(array_filter($rows, fn ($r) => empty($r['vorgemerkt'])));
+    $pending = count($rows) - count($booked);
+
+    $valid = array_values(array_filter($booked, fn ($r) => $r['datum'] !== null));
     usort($valid, fn ($a, $b) => strcmp($a['datum'], $b['datum']));
     return [
-        'format' => $isCreditCard ? 'Kreditkarte' : 'Giro/Tagesgeld',
-        'rows'   => $valid,
-        'errors' => count($rows) - count($valid),
+        'format'     => $isCreditCard ? 'Kreditkarte' : 'Giro/Tagesgeld',
+        'rows'       => $valid,
+        'errors'     => count($booked) - count($valid),
+        'vorgemerkt' => $pending,
     ];
 }
 
@@ -111,6 +118,7 @@ function parse_giro(array $header, array $lines): array
     $cBtext = csv_col($header, 'Buchungstext');
     $cBetrag = csv_col($header, 'Betrag', 'Umsatz');
     $cWaehr = csv_col($header, 'Waehrung', 'Währung');
+    $cInfo = csv_col($header, 'Info', 'Status');
 
     if ($cDatum === null || $cBetrag === null) {
         throw new RuntimeException('Fehlende Pflichtspalten (Buchungstag/Betrag). Gefunden: ' . implode(', ', $header));
@@ -126,9 +134,16 @@ function parse_giro(array $header, array $lines): array
             'buchungstext' => cell($l, $cBtext),
             'betrag'       => parse_amount_de(cell($l, $cBetrag)),
             'waehrung'     => cell($l, $cWaehr) ?: 'EUR',
+            'vorgemerkt'   => is_pending(cell($l, $cInfo)),
         ];
     }
     return $rows;
+}
+
+/** "Umsatz vorgemerkt" / "vorgemerkt" / "Vormerkung" → true; "Umsatz gebucht" oder leer → false. */
+function is_pending(string $info): bool
+{
+    return preg_match('/vorgemerkt|vormerkung/iu', $info) === 1;
 }
 
 function parse_creditcard(array $header, array $lines): array

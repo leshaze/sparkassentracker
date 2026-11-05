@@ -86,7 +86,8 @@ if ($action !== '') {
                     }
                     $res = read_sparkasse_csv((string) file_get_contents($files['tmp_name'][$i]));
                     [$ins, $skip] = insert_rows($res['rows'], $konto, $rules);
-                    $msgs[] = sprintf('%s (%s): %d neu, %d bereits vorhanden%s.', $name, $res['format'], $ins, $skip,
+                    $msgs[] = sprintf('%s (%s): %d neu, %d bereits vorhanden%s%s.', $name, $res['format'], $ins, $skip,
+                        $res['vorgemerkt'] ? ", {$res['vorgemerkt']} vorgemerkte übersprungen (kommen beim nächsten Import, sobald gebucht)" : '',
                         $res['errors'] ? ", {$res['errors']} Zeilen ohne gültiges Datum übersprungen" : '');
                 }
                 if (!$msgs) {

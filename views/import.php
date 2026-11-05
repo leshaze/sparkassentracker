@@ -5,11 +5,12 @@
         <p class="muted small">
             Sparkassen-Export als „CSV-CAMT“ (Giro, Tagesgeld) oder Kreditkarten-Umsätze.
             Das Format wird automatisch erkannt, doppelte Buchungen werden übersprungen.
+            Vorgemerkte Umsätze werden nicht übernommen – erst, wenn sie gebucht sind.
         </p>
         <form method="post" enctype="multipart/form-data" class="stack">
             <?= form_fields('import') ?>
             <label class="dropzone">
-                <input type="file" name="csv[]" accept=".csv,text/csv" multiple required>
+                <input type="file" name="csv[]" accept=".csv,.txt,text/csv,text/plain" multiple required>
                 <span class="dz-text">CSV-Datei(en) auswählen oder hierher ziehen</span>
             </label>
             <div class="form-grid">

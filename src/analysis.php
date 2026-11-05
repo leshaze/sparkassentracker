@@ -347,12 +347,20 @@ function detect_recurring(?string $today = null): array
     $out = [];
     $consumed = [];
     foreach ($groups as $key => $idx) {
-        if ($rec = recurring_evaluate($rows, $idx, $key, false, $consumed, $today)) {
-            $out[] = $rec;
-            foreach ($idx as $i) {
-                $consumed[$i] = true;
-            }
+        // Buchungen, die schon als Verlängerung einer anderen Gruppe zählen, nicht doppelt
+        $idx = array_values(array_filter($idx, fn ($i) => !isset($consumed[$i])));
+        if (!$idx || !recurring_evaluate($rows, $idx, $key, 'exact', $consumed, $today)) {
+            continue;
         }
+        $consumed += array_fill_keys($idx, true);
+        // Betragsänderung (Mieterhöhung, neuer Abschlag): spätere Buchungen beim selben
+        // Empfänger im selben Rhythmus mit bis zu ±25 % anderem Betrag gehören dazu
+        $ext = recurring_extension($rows, $idx, $consumed);
+        if ($ext) {
+            $consumed += array_fill_keys($ext, true);
+            $idx = array_merge($idx, $ext);
+        }
+        $out[] = recurring_evaluate($rows, $idx, $key, $ext ? 'extended' : 'exact', $consumed, $today);
     }
 
     $flex = [];
@@ -362,16 +370,62 @@ function detect_recurring(?string $today = null): array
         }
     }
     foreach ($flex as $key => $idx) {
-        if ($rec = recurring_evaluate($rows, $idx, $key, true, $consumed, $today)) {
+        if ($rec = recurring_evaluate($rows, $idx, $key, 'flex', $consumed, $today)) {
             $out[] = $rec;
         }
     }
     return $out;
 }
 
-/** Prüft eine Gruppe von Buchungen (Indizes in $rows) auf festen Rhythmus. */
-function recurring_evaluate(array $rows, array $idx, string $key, bool $flex, array $consumed, string $today): ?array
+/**
+ * Spätere, noch nicht zugeordnete Buchungen beim selben Empfänger (gleiches Vorzeichen),
+ * die den Rhythmus einer erkannten Gruppe fortsetzen und deren Betrag um höchstens ±25 %
+ * vom bisherigen abweicht. Gibt ihre Indizes zurück.
+ */
+function recurring_extension(array $rows, array $idx, array $consumed): array
 {
+    $g = array_map(fn ($i) => $rows[$i], $idx);
+    $dates = array_values(array_unique(array_column($g, 'datum')));
+    $iv = [];
+    for ($i = 1; $i < count($dates); $i++) {
+        $iv[] = days_between($dates[$i - 1], $dates[$i]);
+    }
+    $freq = classify_interval(median($iv));
+    if (!$freq) {
+        return [];
+    }
+    $fd = FREQUENZEN[$freq];
+    $tol = max(3.0, $fd * 0.2);
+    $empf = mb_strtolower(trim($g[0]['empfaenger']));
+    $ref = abs((float) end($g)['betrag']);
+    $neg = (float) $g[0]['betrag'] < 0;
+    $last = end($dates);
+    $ext = [];
+    foreach ($rows as $i => $r) {
+        if (isset($consumed[$i]) || $r['datum'] <= $last || mb_strtolower(trim($r['empfaenger'])) !== $empf
+            || ((float) $r['betrag'] < 0) !== $neg) {
+            continue;
+        }
+        $b = abs((float) $r['betrag']);
+        if (abs($b - $ref) > $ref * FLEX_TOLERANZ || abs(days_between($last, $r['datum']) - $fd) > $tol) {
+            continue;
+        }
+        $ext[] = $i;
+        $last = $r['datum'];
+        $ref = $b;
+    }
+    return $ext;
+}
+
+/**
+ * Prüft eine Gruppe von Buchungen (Indizes in $rows) auf festen Rhythmus.
+ * $mode: 'exact' (gleicher Betrag), 'flex' (nur Empfänger, lange Rhythmen, ±25 %),
+ *        'extended' (erkannte Gruppe + spätere Buchungen mit geändertem Betrag).
+ */
+function recurring_evaluate(array $rows, array $idx, string $key, string $mode, array $consumed, string $today): ?array
+{
+    $flex = $mode === 'flex';
+    $variable = $mode !== 'exact';   // Betrag darf sich ändern, es zählt die letzte Zahlung
     $g = array_map(fn ($i) => $rows[$i], $idx);
     $dates = array_values(array_unique(array_column($g, 'datum')));
     if (count($dates) < 2) {
@@ -395,8 +449,10 @@ function recurring_evaluate(array $rows, array $idx, string $key, bool $flex, ar
     if ($regular / count($iv) < 0.6) {
         return null;
     }
+    // Buchungen in Datumsreihenfolge (Verlängerungen hängen hinten an)
+    usort($g, fn ($a, $b) => strcmp($a['datum'], $b['datum']));
     $amounts = array_map(fn ($r) => round((float) $r['betrag'], 2), $g);
-    if ($flex) {
+    if ($variable) {
         // Beitragsanpassungen erlaubt, aber keine beliebigen Beträge
         $med = abs(median($amounts));
         foreach ($amounts as $a) {
@@ -423,8 +479,8 @@ function recurring_evaluate(array $rows, array $idx, string $key, bool $flex, ar
     if ($inSpan > 2 * count($g) + 2) {
         return null;
     }
-    $betrag = $flex
-        ? (float) end($g)['betrag']                                     // aktueller Beitrag
+    $betrag = $variable
+        ? (float) end($g)['betrag']                                     // aktueller Betrag
         : array_sum(array_column(array_slice($g, -3), 'betrag')) / count(array_slice($g, -3));
     $last = end($dates);
     $next = (new DateTimeImmutable($last))->modify(FREQ_MODIFY[$freq])->format('Y-m-d');
@@ -444,7 +500,7 @@ function recurring_evaluate(array $rows, array $idx, string $key, bool $flex, ar
         'konto'          => end($g)['konto'],
         'aktiv'          => $since <= $fd * 2 + 5,
         'source'         => 'auto',
-        'flex'           => $flex && count(array_unique($amounts)) > 1,   // Betrag hat sich geändert
+        'flex'           => $variable && count(array_unique($amounts)) > 1,   // Betrag hat sich geändert
         'override_id'    => null,
         'notiz'          => '',
     ];
@@ -553,6 +609,22 @@ function manual_matches(array $m, string $empf, float $betrag): bool
         && abs(abs($betrag) - abs($m['betrag'])) <= abs($m['betrag']) * FLEX_TOLERANZ;
 }
 
+/**
+ * Gehört eine Buchung zu einer wiederkehrenden Zahlung? Automatisch erkannte: gleicher
+ * Empfänger, gleiches Vorzeichen, Betrag ±25 % (Mieterhöhung, neuer Abschlag …).
+ * Manuelle: Empfänger enthält den eingetragenen Namen (siehe manual_matches).
+ */
+function recurring_matches(array $rc, string $empf, float $betrag): bool
+{
+    if ($rc['source'] === 'manual') {
+        return manual_matches($rc, $empf, $betrag);
+    }
+    $ref = abs((float) $rc['betrag']);
+    return ($betrag < 0) === ($rc['betrag'] < 0)
+        && mb_strtolower(trim($empf)) === mb_strtolower(trim($rc['empfaenger']))
+        && abs(abs($betrag) - $ref) <= $ref * FLEX_TOLERANZ;
+}
+
 /** Buchungen nach dem Ende-Datum (für den Hinweis „wieder abgebucht“). */
 function bookings_after_end(array $r): array
 {
@@ -602,46 +674,14 @@ function forecast(array $f, ?string $today = null): array
     $monthEnd = $t->format('Y-m-t');
     $first = $t->modify('first day of this month');
 
-    // Wiederkehrende Posten: Schlüssel für "fest", plus noch ausstehende diesen Monat
-    $fixKeys = [];
-    $expIn = 0.0;
-    $expOut = 0.0;
-    $pending = [];
-    $manual = [];
-    foreach (recurring_list(true, $todayStr) as $rc) {
-        if (!$rc['naechstes_datum']) {
-            continue;   // manueller Eintrag ohne Fälligkeit
-        }
-        $next = $rc['naechstes_datum'];
-        if ($rc['source'] === 'manual') {
-            // manuelle Einträge haben kein Konto → nur in "Alle Konten"
-            if ($f['konto'] !== '') {
-                continue;
-            }
-            $manual[] = $rc;
-            if ($next >= "$ym-01" && $next <= $monthEnd && days_between($next, $todayStr) <= 10
-                && !manual_booked($rc, $next, $todayStr)) {
-                $pending[] = $rc;
-                $rc['betrag'] < 0 ? $expOut += -$rc['betrag'] : $expIn += $rc['betrag'];
-            }
-            continue;
-        }
-        if ($f['konto'] !== '' && $rc['konto'] !== $f['konto']) {
-            continue;
-        }
-        $fixKeys[$rc['key']] = true;
-        // überfällig (noch nicht gebucht) oder fällig bis Monatsende
-        if (substr($rc['letztes_datum'], 0, 7) !== $ym && $next <= $monthEnd && days_between($next, $todayStr) <= 10) {
-            $pending[] = $rc;
-            $rc['betrag'] < 0 ? $expOut += -$rc['betrag'] : $expIn += $rc['betrag'];
-        }
-    }
-    $isFix = function (string $empf, float $b) use ($fixKeys, $manual): bool {
-        if (isset($fixKeys[recurring_key($empf, $b)]) || isset($fixKeys[recurring_key_flex($empf, $b)])) {
-            return true;
-        }
-        foreach ($manual as $m) {
-            if (manual_matches($m, $empf, $b)) {
+    // Alle erkannten wiederkehrenden Zahlungen – auch beendete und ausgebliebene: in den
+    // Vormonaten waren sie Fixkosten und gehören nicht in den Median der variablen Ausgaben.
+    // Ausgeblendete fehlen hier bewusst (vom Nutzer als „nicht wiederkehrend“ markiert).
+    $all = array_values(array_filter(recurring_list(false, $todayStr),
+        fn ($rc) => $rc['source'] === 'manual' ? $f['konto'] === '' : ($f['konto'] === '' || $rc['konto'] === $f['konto'])));
+    $isFix = function (string $empf, float $b) use ($all): bool {
+        foreach ($all as $rc) {
+            if (recurring_matches($rc, $empf, $b)) {
                 return true;
             }
         }
@@ -649,10 +689,13 @@ function forecast(array $f, ?string $today = null): array
     };
 
     // Ausgaben eines Zeitraums nach Monat, aufgeteilt in fest/variabel
-    $split = function (string $from, string $to) use ($f, $isFix): array {
+    $rowsOf = function (string $from, string $to) use ($f): array {
         [$w, $p] = where_clause(['konto' => $f['konto'], 'from' => $from, 'to' => $to], 'category');
+        return db_all("SELECT substr(datum,1,7) AS m, empfaenger, betrag FROM transactions $w", $p);
+    };
+    $split = function (array $rows) use ($isFix): array {
         $out = [];
-        foreach (db_all("SELECT substr(datum,1,7) AS m, empfaenger, betrag FROM transactions $w", $p) as $r) {
+        foreach ($rows as $r) {
             $out[$r['m']] ??= ['ein' => 0.0, 'aus' => 0.0, 'fix' => 0.0];
             $b = (float) $r['betrag'];
             if ($b > 0) {
@@ -666,19 +709,58 @@ function forecast(array $f, ?string $today = null): array
         }
         return $out;
     };
+    $curRows = $rowsOf("$ym-01", $monthEnd);
 
-    $cur = $split("$ym-01", $monthEnd)[$ym] ?? ['ein' => 0.0, 'aus' => 0.0, 'fix' => 0.0];
+    // Noch ausstehend: aktive Posten mit Fälligkeit bis Monatsende, für die es in diesem
+    // Monat noch keine passende Buchung gibt (Empfänger + Betrag ±25 %)
+    $expIn = 0.0;
+    $expOut = 0.0;
+    $pending = [];
+    $seen = [];
+    $active = array_filter($all, fn ($rc) => $rc['aktiv'] && $rc['naechstes_datum']);
+    usort($active, fn ($x, $y) => strcmp((string) $y['letztes_datum'], (string) $x['letztes_datum']));
+    foreach ($active as $rc) {
+        $next = $rc['naechstes_datum'];
+        if ($next > $monthEnd || days_between($next, $todayStr) > 10
+            || ($rc['source'] === 'manual' && $next < "$ym-01")) {
+            continue;
+        }
+        if ($rc['letztes_datum'] && substr($rc['letztes_datum'], 0, 7) === $ym) {
+            continue;   // diesen Monat schon gebucht
+        }
+        $booked = false;
+        foreach ($curRows as $r) {
+            if (recurring_matches($rc, (string) $r['empfaenger'], (float) $r['betrag'])) {
+                $booked = true;
+                break;
+            }
+        }
+        if ($booked || ($rc['source'] === 'manual' && manual_booked($rc, $next, $todayStr))) {
+            continue;
+        }
+        // doppelt erkannte Zahlung (alter und neuer Betrag) nur einmal erwarten
+        $dup = mb_strtolower(trim($rc['empfaenger'])) . '|' . ($rc['betrag'] < 0 ? '-' : '+') . '|' . $rc['frequenz'];
+        if (isset($seen[$dup]) && abs(abs($seen[$dup]) - abs($rc['betrag'])) <= abs($seen[$dup]) * FLEX_TOLERANZ) {
+            continue;
+        }
+        $seen[$dup] = $rc['betrag'];
+        $pending[] = $rc;
+        $rc['betrag'] < 0 ? $expOut += -$rc['betrag'] : $expIn += $rc['betrag'];
+    }
+
+    $cur = $split($curRows)[$ym] ?? ['ein' => 0.0, 'aus' => 0.0, 'fix' => 0.0];
     $soFarIn = $cur['ein'];
     $soFarOut = $cur['aus'];
     $fixSoFar = $cur['fix'];
     $varSoFar = $soFarOut - $fixSoFar;
 
     // Letzte 6 abgeschlossene Monate mit Daten
-    $hist = $split($first->modify('-6 months')->format('Y-m-d'), $first->modify('-1 day')->format('Y-m-d'));
+    $hist = $split($rowsOf($first->modify('-6 months')->format('Y-m-d'), $first->modify('-1 day')->format('Y-m-d')));
     $avg6 = $hist ? array_sum(array_column($hist, 'aus')) / count($hist) : null;
     // Median statt Mittelwert: ein einzelner teurer Monat (Reparatur, Urlaub, nicht
     // erkannte Jahreszahlung) verzerrt die Schätzung der Folgemonate nicht
     $varAvg = $hist ? median(array_map(fn ($m) => $m['aus'] - $m['fix'], array_values($hist))) : null;
+    $fixAvg = $hist ? array_sum(array_column($hist, 'fix')) / count($hist) : null;
 
     $weight = $day / $dim;
     $varLinear = $varSoFar / $day * $dim;
@@ -693,7 +775,7 @@ function forecast(array $f, ?string $today = null): array
         'bisher_ein' => $soFarIn, 'bisher_aus' => $soFarOut,
         'erwartet_ein' => $expIn, 'erwartet_aus' => $expOut, 'ausstehend' => $pending,
         'fix_aus' => $fixSoFar + $expOut, 'variabel_bisher' => $varSoFar, 'variabel_prognose' => $varProg,
-        'variabel_schnitt' => $varAvg,
+        'variabel_schnitt' => $varAvg, 'fix_schnitt' => $fixAvg,
         'prognose_aus' => $progOut, 'prognose_ein' => $progIn, 'prognose_saldo' => $progIn - $progOut,
         'schnitt6_aus' => $avg6, 'schnitt6_monate' => count($hist),
         'diff_pct' => $avg6 ? ($progOut - $avg6) / $avg6 * 100 : null,

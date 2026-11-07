@@ -97,6 +97,7 @@ if ($action !== '') {
                 if ($n) {
                     $msgs[] = "$n Übertrag-Paar(e) automatisch erkannt.";
                 }
+                update_effective_dates();
                 flash(implode(' ', $msgs));
                 redirect('import');
 
@@ -104,12 +105,23 @@ if ($action !== '') {
                 $k = post('konto');
                 $freed = release_transfer_partners($k);
                 $n = db_exec('DELETE FROM transactions WHERE konto = ?', [$k]);
+                set_abrechnungskonto($k, false);
+                update_effective_dates();
                 flash("Konto „{$k}“ mit $n Umsätzen gelöscht."
                     . ($freed ? " $freed Gegenbuchung(en) auf anderen Konten sind keine Überträge mehr und zählen wieder normal." : ''));
                 redirect('import');
 
+            case 'konto_abrechnung':
+                set_abrechnungskonto(post('konto'), post('abrechnung') === '1');
+                update_effective_dates();
+                flash(post('abrechnung') === '1'
+                    ? '„' . post('konto') . '“: Zahlungen zählen jetzt erst zum Tag der Abrechnung.'
+                    : '„' . post('konto') . '“: Zahlungen zählen wieder zum Buchungstag.');
+                break;
+
             case 'detect_transfers':
                 $n = detect_transfers();
+                update_effective_dates();
                 flash($n ? "$n neue(s) Übertrag-Paar(e) erkannt." : 'Keine neuen Überträge erkannt.');
                 break;
 
@@ -130,6 +142,9 @@ if ($action !== '') {
                          uebertrag_gesperrt = ?, kategorie_manuell = CASE WHEN ? THEN 1 ELSE kategorie_manuell END
                          WHERE hash = ?',
                     [$cat, $sub, mb_substr(post('notiz'), 0, 500), $ue, $gesperrt, $catChanged ? 1 : 0, $hash]);
+                if ($ue !== (int) $old['ist_uebertrag']) {
+                    update_effective_dates();   // Abrechnung (Übertrag) hinzugefügt/entfernt
+                }
                 $msg = 'Umsatz gespeichert.';
                 if (post('regel') === '1' && post('regel_kw') !== '' && $cat !== Rules::FALLBACK) {
                     $rules->addKeyword($cat, $sub, post('regel_kw'));
@@ -330,6 +345,28 @@ switch ($page) {
             'forecast' => forecast($f),
             'sparen'   => savings_breakdown($f),
         ];
+        // Zeitraum enthält den laufenden Monat → bis Monatsende Erwartetes mit anzeigen
+        $today = date('Y-m-d');
+        $vars['laufend'] = (!$f['from'] || $f['from'] <= $today) && (!$f['to'] || $f['to'] >= $today);
+        if ($vars['laufend']) {
+            $fc = $vars['forecast'];
+            $vars['erw_ein'] = $fc['erwartet_ein'];
+            $vars['erw_aus'] = max(0.0, $fc['prognose_aus'] - $fc['bisher_aus']);
+            $ym = date('Y-m');
+            $found = false;
+            foreach ($vars['monthly'] as &$m) {
+                if ($m['monat'] === $ym) {
+                    $m['ein_erw'] = round($vars['erw_ein'], 2);
+                    $m['aus_erw'] = round($vars['erw_aus'], 2);
+                    $found = true;
+                }
+            }
+            unset($m);
+            if (!$found) {
+                $vars['monthly'][] = ['monat' => $ym, 'ein' => 0.0, 'aus' => 0.0, 'saldo' => 0.0,
+                    'ein_erw' => round($vars['erw_ein'], 2), 'aus_erw' => round($vars['erw_aus'], 2)];
+            }
+        }
         break;
 
     case 'umsaetze':
@@ -404,6 +441,7 @@ switch ($page) {
     case 'import':
         $vars['konten'] = db_all("SELECT konto, COUNT(*) AS n, MIN(substr(datum,1,10)) AS von, MAX(substr(datum,1,10)) AS bis,
                                   SUM(ist_uebertrag) AS ue FROM transactions GROUP BY konto ORDER BY konto");
+        $vars['abrechnung'] = abrechnungskonten();
         break;
 }
 

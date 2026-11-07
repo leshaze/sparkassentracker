@@ -36,11 +36,23 @@
         <?php else: ?>
             <div class="table-scroll">
             <table>
-                <thead><tr><th>Konto</th><th class="num">Umsätze</th><th>Zeitraum</th><th class="num">Überträge</th><th></th></tr></thead>
+                <thead><tr><th>Konto</th><th>Kreditkarte</th><th class="num">Umsätze</th><th>Zeitraum</th><th class="num">Überträge</th><th></th></tr></thead>
                 <tbody>
                 <?php foreach ($konten as $k): ?>
                     <tr>
                         <td><span class="konto-tag"><?= h($k['konto']) ?></span></td>
+                        <td>
+                            <form method="post" data-autosubmit class="inline-form">
+                                <?= form_fields('konto_abrechnung') ?>
+                                <input type="hidden" name="konto" value="<?= h($k['konto']) ?>">
+                                <input type="hidden" name="abrechnung" value="0">
+                                <label class="check" title="Zahlungen zählen erst zum Tag der Abrechnung (Übertrag vom Girokonto)">
+                                    <input type="checkbox" name="abrechnung" value="1" <?= in_array($k['konto'], $abrechnung, true) ? 'checked' : '' ?>>
+                                    erst bei Abrechnung
+                                </label>
+                                <noscript><button class="btn small" type="submit">OK</button></noscript>
+                            </form>
+                        </td>
                         <td class="num"><?= number_format((int) $k['n'], 0, ',', '.') ?></td>
                         <td class="nowrap small"><?= h(fmt_date($k['von'])) ?> – <?= h(fmt_date($k['bis'])) ?></td>
                         <td class="num"><?= (int) $k['ue'] ?></td>
@@ -61,6 +73,12 @@
                 <button class="btn small" type="submit">Überträge jetzt erkennen</button>
                 <span class="muted small">läuft nach jedem Import automatisch (Fenster <?= (int) cfg('transfer_max_days') ?> Tage)</span>
             </form>
+            <p class="muted small">
+                <strong>Kreditkarte „erst bei Abrechnung“:</strong> Kartenzahlungen zählen in Übersicht, Prognose und
+                Auswertungen erst zum Tag der Abrechnung (erkannter Übertrag vom Girokonto) – dann ist das Geld wirklich weg.
+                Zahlungen nach der letzten Abrechnung sind offen und stehen in der Prognose als „noch erwartet“.
+                Die Umsatzliste zeigt weiter das Kaufdatum.
+            </p>
         <?php endif; ?>
     </section>
 </div>

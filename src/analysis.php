@@ -79,21 +79,34 @@ function resolve_period(string $preset, string $von, string $bis): array
  *  'auto'    : bei 'values'/'category' ausblenden, bei 'list' zeigen
  *  'only'    : nur Spar-Buchungen (für „Gespart“)
  */
+/**
+ * Datum, zu dem eine Buchung in Auswertungen zählt: bei Kreditkarten (Abrechnungskonten)
+ * der Tag der Abrechnung, sonst der Buchungstag.
+ */
+const TX_DATUM = "COALESCE(wirksam_am, substr(datum,1,10))";
+
 function where_clause(array $f, string $mode = 'values', bool $showTransfers = false, string $savings = 'auto'): array
 {
     $w = [];
     $p = [];
+    // Auswertungen nach Wirksam-Datum, die Umsatzliste nach Buchungstag
+    $d = $mode === 'list' ? 'substr(datum,1,10)' : TX_DATUM;
     if ($f['konto'] !== '') {
         $w[] = 'konto = ?';
         $p[] = $f['konto'];
     }
     if (!empty($f['from'])) {
-        $w[] = 'substr(datum,1,10) >= ?';
+        $w[] = "$d >= ?";
         $p[] = $f['from'];
     }
     if (!empty($f['to'])) {
-        $w[] = 'substr(datum,1,10) <= ?';
+        $w[] = "$d <= ?";
         $p[] = $f['to'];
+    }
+    // Offene Kreditkartenzahlungen (Abrechnung steht noch aus) belasten das Konto noch nicht
+    if ($mode !== 'list' && empty($f['mit_offenen'])) {
+        $w[] = '(wirksam_am IS NULL OR wirksam_am <= ?)';
+        $p[] = $f['stichtag'] ?? date('Y-m-d');
     }
     $hideTransfers = match ($mode) {
         'category' => true,
@@ -168,14 +181,14 @@ function savings_breakdown(array $f): array
 function monthly_series(array $f): array
 {
     [$w, $p] = where_clause($f, 'values');
-    $rows = db_all("SELECT substr(datum,1,7) AS m,
+    $rows = db_all("SELECT substr(" . TX_DATUM . ",1,7) AS m,
             SUM(CASE WHEN betrag > 0 THEN betrag ELSE 0 END) AS ein,
             SUM(CASE WHEN betrag < 0 THEN -betrag ELSE 0 END) AS aus
         FROM transactions $w GROUP BY m ORDER BY m", $p);
     $gespart = [];
     if (spar_kategorien()) {
         [$sw, $sp] = where_clause($f, 'values', false, 'only');
-        foreach (db_all("SELECT substr(datum,1,7) AS m, -SUM(betrag) AS s FROM transactions $sw GROUP BY m", $sp) as $g) {
+        foreach (db_all("SELECT substr(" . TX_DATUM . ",1,7) AS m, -SUM(betrag) AS s FROM transactions $sw GROUP BY m", $sp) as $g) {
             $gespart[$g['m']] = round((float) $g['s'], 2);
         }
     }
@@ -745,27 +758,47 @@ function forecast(array $f, ?string $today = null): array
     };
 
     // Ausgaben eines Zeitraums nach Monat, aufgeteilt in fest/variabel
-    $rowsOf = function (string $from, string $to) use ($f): array {
-        [$w, $p] = where_clause(['konto' => $f['konto'], 'from' => $from, 'to' => $to], 'category');
-        return db_all("SELECT substr(datum,1,7) AS m, empfaenger, betrag FROM transactions $w", $p);
+    $rowsOf = function (string $from, string $to, bool $offen = false) use ($f, $todayStr): array {
+        [$w, $p] = where_clause(['konto' => $f['konto'], 'from' => $from, 'to' => $to,
+            'mit_offenen' => $offen, 'stichtag' => $todayStr], 'category');
+        return db_all("SELECT substr(" . TX_DATUM . ",1,7) AS m, " . TX_DATUM . " AS d, wirksam_am IS NOT NULL AS kk,
+                       konto, empfaenger, betrag FROM transactions $w", $p);
     };
-    $split = function (array $rows) use ($isFix): array {
+    // Kreditkarten (Abrechnungskonten) sind ein eigener Block: sie belasten das Konto als
+    // eine Summe am Abrechnungstag, eine tägliche Hochrechnung passt dafür nicht
+    $abrechnung = abrechnungskonten();
+    $split = function (array $rows) use ($isFix, $abrechnung): array {
         $out = [];
         foreach ($rows as $r) {
-            $out[$r['m']] ??= ['ein' => 0.0, 'aus' => 0.0, 'fix' => 0.0];
+            $out[$r['m']] ??= ['ein' => 0.0, 'aus' => 0.0, 'fix' => 0.0, 'kk' => 0.0];
             $b = (float) $r['betrag'];
             if ($b > 0) {
                 $out[$r['m']]['ein'] += $b;
             } elseif ($b < 0) {
                 $out[$r['m']]['aus'] += -$b;
-                if ($isFix((string) $r['empfaenger'], $b)) {
+                if (in_array($r['konto'], $abrechnung, true)) {
+                    $out[$r['m']]['kk'] += -$b;
+                } elseif ($isFix((string) $r['empfaenger'], $b)) {
                     $out[$r['m']]['fix'] += -$b;
                 }
             }
         }
         return $out;
     };
-    $curRows = $rowsOf("$ym-01", $monthEnd);
+    // Laufender Monat: bis heute wirksam = "bisher"; Kreditkartenzahlungen, deren Abrechnung
+    // noch in diesem Monat ansteht = "noch erwartet" (bereits gekauft, Betrag bekannt)
+    $curAll = $rowsOf("$ym-01", $monthEnd, true);
+    $isOpen = fn ($r) => $r['kk'] && $r['d'] > $todayStr;
+    $curRows = array_values(array_filter($curAll, fn ($r) => !$isOpen($r)));
+    $kkOpen = [];   // je Karte: schon gekauft, Abrechnung steht in diesem Monat noch aus
+    foreach ($curAll as $r) {
+        if ($isOpen($r) && (float) $r['betrag'] < 0) {
+            $kkOpen[$r['konto']] ??= ['empfaenger' => 'Kreditkarten-Abrechnung ' . $r['konto'], 'betrag' => 0.0,
+                'naechstes_datum' => $r['d'], 'source' => 'kreditkarte', 'bisher' => 0.0];
+            $kkOpen[$r['konto']]['bisher'] += -(float) $r['betrag'];
+            $kkOpen[$r['konto']]['naechstes_datum'] = max($kkOpen[$r['konto']]['naechstes_datum'], $r['d']);
+        }
+    }
 
     // Noch ausstehend: aktive Posten mit Fälligkeit bis Monatsende, für die es in diesem
     // Monat noch keine passende Buchung gibt (Empfänger + Betrag ±25 %)
@@ -783,7 +816,10 @@ function forecast(array $f, ?string $today = null): array
             $sparPending += -$rc['betrag'];
         }
     }
-    $active = array_filter($all, fn ($rc) => $rc['aktiv'] && $rc['naechstes_datum'] && !in_array($rc['kategorie'], $spar, true));
+    // Wiederkehrende Zahlungen über die Kreditkarte belasten das Konto erst mit einer späteren
+    // Abrechnung – nicht hier, sondern über die offenen Kartenzahlungen erfasst
+    $active = array_filter($all, fn ($rc) => $rc['aktiv'] && $rc['naechstes_datum'] && !in_array($rc['kategorie'], $spar, true)
+        && !in_array($rc['konto'], $abrechnung, true));
     usort($active, fn ($x, $y) => strcmp((string) $y['letztes_datum'], (string) $x['letztes_datum']));
     foreach ($active as $rc) {
         $next = $rc['naechstes_datum'];
@@ -814,33 +850,46 @@ function forecast(array $f, ?string $today = null): array
         $rc['betrag'] < 0 ? $expOut += -$rc['betrag'] : $expIn += $rc['betrag'];
     }
 
-    $cur = $split($curRows)[$ym] ?? ['ein' => 0.0, 'aus' => 0.0, 'fix' => 0.0];
+    $cur = $split($curRows)[$ym] ?? ['ein' => 0.0, 'aus' => 0.0, 'fix' => 0.0, 'kk' => 0.0];
     $soFarIn = $cur['ein'];
     $soFarOut = $cur['aus'];
     $fixSoFar = $cur['fix'];
-    $varSoFar = $soFarOut - $fixSoFar;
+    $kkSoFar = $cur['kk'];                       // diesen Monat schon abgerechnet
+    $varSoFar = $soFarOut - $fixSoFar - $kkSoFar;
 
     // Letzte 6 abgeschlossene Monate mit Daten
-    $hist = $split($rowsOf($first->modify('-6 months')->format('Y-m-d'), $first->modify('-1 day')->format('Y-m-d')));
+    $hist = $split($rowsOf($first->modify('-6 months')->format('Y-m-d'), $first->modify('-1 day')->format('Y-m-d'), true));
     $avg6 = $hist ? array_sum(array_column($hist, 'aus')) / count($hist) : null;
     // Median statt Mittelwert: ein einzelner teurer Monat (Reparatur, Urlaub, nicht
     // erkannte Jahreszahlung) verzerrt die Schätzung der Folgemonate nicht
-    $varAvg = $hist ? median(array_map(fn ($m) => $m['aus'] - $m['fix'], array_values($hist))) : null;
+    $varAvg = $hist ? median(array_map(fn ($m) => $m['aus'] - $m['fix'] - $m['kk'], array_values($hist))) : null;
     $fixAvg = $hist ? array_sum(array_column($hist, 'fix')) / count($hist) : null;
+
+    // Anstehende Kartenabrechnung: bekannte offene Käufe, mindestens aber der Median der
+    // bisherigen Monatsabrechnungen (bis zum Abrechnungstag wird ja weiter gekauft)
+    $kkMed = $hist ? median(array_column(array_values($hist), 'kk')) : 0.0;
+    $kkOpenSum = 0.0;
+    foreach ($kkOpen as $k) {
+        $k['betrag'] = -round(max($k['bisher'], count($kkOpen) === 1 ? $kkMed : 0.0), 2);
+        $pending[] = $k;
+        $expOut += -$k['betrag'];
+        $kkOpenSum += -$k['betrag'];
+    }
 
     $weight = $day / $dim;
     $varLinear = $varSoFar / $day * $dim;
     $varProg = $varAvg === null ? $varLinear : $weight * $varLinear + (1 - $weight) * $varAvg;
     $varProg = max($varProg, $varSoFar);
 
-    $progOut = $fixSoFar + $expOut + $varProg;
+    $progOut = $fixSoFar + $kkSoFar + $expOut + $varProg;
     $progIn = $soFarIn + $expIn;
 
     return [
         'monat' => $ym, 'tag' => $day, 'tage' => $dim,
         'bisher_ein' => $soFarIn, 'bisher_aus' => $soFarOut,
         'erwartet_ein' => $expIn, 'erwartet_aus' => $expOut, 'ausstehend' => $pending,
-        'fix_aus' => $fixSoFar + $expOut, 'variabel_bisher' => $varSoFar, 'variabel_prognose' => $varProg,
+        'fix_aus' => $fixSoFar + $expOut - $kkOpenSum, 'variabel_bisher' => $varSoFar, 'variabel_prognose' => $varProg,
+        'kreditkarte_offen' => $kkOpenSum, 'kreditkarte_bisher' => $kkSoFar,
         'variabel_schnitt' => $varAvg, 'fix_schnitt' => $fixAvg,
         'sparen_bisher' => $spar ? (float) totals(['konto' => $f['konto'], 'from' => "$ym-01", 'to' => $monthEnd])['gespart'] : null,
         'sparen_erwartet' => $sparPending,
@@ -876,7 +925,7 @@ function monthly_category_expenses(string $konto, string $from, string $to): arr
     [$w, $p] = where_clause(['konto' => $konto, 'from' => $from, 'to' => $to], 'category');
     $w .= ($w ? ' AND ' : 'WHERE ') . 'betrag < 0';
     $out = [];
-    foreach (db_all("SELECT substr(datum,1,7) AS m, COALESCE(NULLIF(kategorie,''),'Unbekannt') AS kat, -SUM(betrag) AS s
+    foreach (db_all("SELECT substr(" . TX_DATUM . ",1,7) AS m, COALESCE(NULLIF(kategorie,''),'Unbekannt') AS kat, -SUM(betrag) AS s
                      FROM transactions $w GROUP BY m, kat", $p) as $r) {
         $out[$r['kat']][$r['m']] = (float) $r['s'];
     }
@@ -901,7 +950,7 @@ function insights(array $f): array
     $hist = monthly_category_expenses($konto, $histFrom, $histTo);
     $cur = monthly_category_expenses($konto, $ref->format('Y-m-d'), $refTo);
     [$w, $p] = where_clause(['konto' => $konto, 'from' => $histFrom, 'to' => $histTo], 'category');
-    $histMonths = array_column(db_all("SELECT DISTINCT substr(datum,1,7) AS m FROM transactions $w", $p), 'm');
+    $histMonths = array_column(db_all("SELECT DISTINCT substr(" . TX_DATUM . ",1,7) AS m FROM transactions $w", $p), 'm');
     $nHist = count($histMonths);
 
     // 1. Kategorien-Anstieg
@@ -1069,7 +1118,7 @@ function yoy(int $year, string $konto): array
 {
     $prev = $year - 1;
     [$w, $p] = where_clause(['konto' => $konto, 'from' => "$prev-01-01", 'to' => "$year-12-31"], 'category');
-    $rows = db_all("SELECT substr(datum,1,4) AS y, CAST(substr(datum,6,2) AS INTEGER) AS m,
+    $rows = db_all("SELECT substr(" . TX_DATUM . ",1,4) AS y, CAST(substr(" . TX_DATUM . ",6,2) AS INTEGER) AS m,
             SUM(CASE WHEN betrag<0 THEN -betrag ELSE 0 END) AS aus,
             SUM(CASE WHEN betrag>0 THEN betrag ELSE 0 END) AS ein
         FROM transactions $w GROUP BY y, m", $p);

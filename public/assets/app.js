@@ -184,17 +184,24 @@
         const kind = cv.dataset.chart;
 
         if (kind === 'monthly') {
+            const hasExp = data.some((d) => 'ein_erw' in d);
             new Chart(cv, {
                 data: {
                     labels: data.map((d) => d.label),
                     datasets: [
-                        { type: 'bar', label: 'Einnahmen', data: data.map((d) => d.ein), backgroundColor: POS,
+                        { type: 'bar', label: 'Einnahmen', data: data.map((d) => d.ein), backgroundColor: POS, stack: 'ein',
                           borderRadius: 4, borderSkipped: 'start', maxBarThickness: 22, categoryPercentage: .7, barPercentage: .9 },
-                        { type: 'bar', label: 'Ausgaben', data: data.map((d) => d.aus), backgroundColor: NEG,
+                        ...(hasExp ? [{ type: 'bar', label: 'Einnahmen erwartet', data: data.map((d) => d.ein_erw ?? null), stack: 'ein',
+                          backgroundColor: POS + '55', borderColor: POS, borderWidth: 1,
+                          maxBarThickness: 22, categoryPercentage: .7, barPercentage: .9 }] : []),
+                        { type: 'bar', label: 'Ausgaben', data: data.map((d) => d.aus), backgroundColor: NEG, stack: 'aus',
                           borderRadius: 4, borderSkipped: 'start', maxBarThickness: 22, categoryPercentage: .7, barPercentage: .9 },
-                        ...(data.some((d) => 'gespart' in d) ? [{ type: 'bar', label: 'Gespart', data: data.map((d) => d.gespart), backgroundColor: SAVE,
+                        ...(hasExp ? [{ type: 'bar', label: 'Ausgaben erwartet', data: data.map((d) => d.aus_erw ?? null), stack: 'aus',
+                          backgroundColor: NEG + '55', borderColor: NEG, borderWidth: 1,
+                          maxBarThickness: 22, categoryPercentage: .7, barPercentage: .9 }] : []),
+                        ...(data.some((d) => 'gespart' in d) ? [{ type: 'bar', label: 'Gespart', data: data.map((d) => d.gespart), backgroundColor: SAVE, stack: 'spar',
                           borderRadius: 4, borderSkipped: 'start', maxBarThickness: 22, categoryPercentage: .7, barPercentage: .9 }] : []),
-                        { type: 'line', label: data.some((d) => 'gespart' in d) ? 'Überschuss' : 'Saldo', data: data.map((d) => d.saldo), borderColor: v('--ink'),
+                        { type: 'line', label: data.some((d) => 'gespart' in d) ? 'Überschuss' : 'Saldo', data: data.map((d) => d.saldo), borderColor: v('--ink'), stack: 'saldo',
                           backgroundColor: v('--ink'), borderWidth: 2, pointRadius: 3, pointHoverRadius: 5,
                           pointBorderColor: surface, pointBorderWidth: 2, tension: .25 },
                     ],
@@ -203,7 +210,7 @@
                     maintainAspectRatio: false,
                     interaction: { mode: 'index', intersect: false },
                     plugins: { legend: { position: 'top', align: 'end' } },
-                    scales: { x: xAxis, y: yAxis },
+                    scales: { x: { ...xAxis, stacked: true }, y: { ...yAxis, stacked: true } },
                 },
             });
         }

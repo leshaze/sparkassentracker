@@ -19,7 +19,7 @@
         <div class="kpi">
             <span class="kpi-label">Bisher ausgegeben</span>
             <span class="kpi-value"><?= fmt_eur($fc['bisher_aus']) ?></span>
-            <span class="kpi-sub">+ <?= fmt_eur($fc['erwartet_aus']) ?> erwartet (wiederkehrend)</span>
+            <span class="kpi-sub">+ <?= fmt_eur($fc['erwartet_aus']) ?> noch erwartet (<?= $fc['kreditkarte_offen'] ? 'wiederkehrend + Kreditkarte' : 'wiederkehrend' ?>)</span>
         </div>
         <div class="kpi">
             <span class="kpi-label">Ausgaben Monatsende</span>
@@ -45,10 +45,10 @@
     </div>
     <?php if ($fc['ausstehend']): ?>
         <details class="pending">
-            <summary><?= count($fc['ausstehend']) ?> wiederkehrende Posten stehen diesen Monat noch aus</summary>
+            <summary><?= count($fc['ausstehend']) ?> Posten stehen diesen Monat noch aus</summary>
             <ul class="plain">
                 <?php foreach ($fc['ausstehend'] as $r): ?>
-                    <li><span><?= h($r['empfaenger']) ?> <span class="muted">· fällig <?= h(fmt_date($r['naechstes_datum'])) ?></span></span>
+                    <li><span><?= h($r['empfaenger']) ?> <span class="muted">· <?= ($r['source'] ?? '') === 'kreditkarte' ? 'ca. ' : 'fällig ' ?><?= h(fmt_date($r['naechstes_datum'])) ?><?php if (($r['source'] ?? '') === 'kreditkarte'): ?> · bisher gekauft <?= fmt_eur($r['bisher']) ?><?php endif; ?></span></span>
                         <span class="num <?= amount_class($r['betrag']) ?>"><?= fmt_eur($r['betrag']) ?></span></li>
                 <?php endforeach; ?>
             </ul>
@@ -56,6 +56,7 @@
     <?php endif; ?>
     <p class="hint">
         Prognose = feste Ausgaben (wiederkehrende Posten: <?= fmt_eur($fc['fix_aus']) ?>, gebucht + noch ausstehend)
+        <?php if ($fc['kreditkarte_offen'] || $fc['kreditkarte_bisher']): ?>+ Kreditkarte (<?= fmt_eur($fc['kreditkarte_bisher'] + $fc['kreditkarte_offen']) ?>: abgerechnet + anstehende Abrechnung, mindestens der übliche Monatsbetrag)<?php endif; ?>
         + variable Ausgaben (≈ <?= fmt_eur($fc['variabel_prognose']) ?>, bisher <?= fmt_eur($fc['variabel_bisher']) ?><?php if ($fc['variabel_schnitt'] !== null): ?>,
         Median der Vormonate <?= fmt_eur($fc['variabel_schnitt']) ?> – dort sind Ø <?= fmt_eur($fc['fix_schnitt']) ?> Fixkosten pro Monat bereits herausgerechnet<?php endif; ?>).
         Die variablen Ausgaben werden am Monatsanfang vor allem aus dem Median der Vormonate geschätzt, gegen Monatsende
@@ -67,16 +68,21 @@
     <div class="card kpi">
         <span class="kpi-label">Einnahmen</span>
         <span class="kpi-value pos"><?= fmt_eur($totals['ein']) ?></span>
+        <?php if (!empty($laufend) && $erw_ein > 0): ?><span class="kpi-sub">+ <?= fmt_eur($erw_ein) ?> erwartet bis Monatsende</span><?php endif; ?>
         <?php if ($totals['gespart'] !== null): ?><span class="kpi-sub">ohne Entnahmen aus Erspartem</span><?php endif; ?>
     </div>
     <div class="card kpi">
         <span class="kpi-label">Ausgaben</span>
         <span class="kpi-value neg"><?= fmt_eur($totals['aus']) ?></span>
+        <?php if (!empty($laufend) && $erw_aus > 0): ?><span class="kpi-sub">+ ≈ <?= fmt_eur($erw_aus) ?> erwartet bis Monatsende</span><?php endif; ?>
         <?php if ($totals['gespart'] !== null): ?><span class="kpi-sub">ohne Sparen</span><?php endif; ?>
     </div>
     <div class="card kpi">
         <span class="kpi-label"><?= $totals['saldo'] < 0 ? 'Fehlbetrag' : 'Überschuss' ?></span>
         <span class="kpi-value <?= amount_class($totals['saldo']) ?>"><?= fmt_eur($totals['saldo'], true) ?></span>
+        <?php if (!empty($laufend)): $endSaldo = $totals['saldo'] + $erw_ein - $erw_aus; ?>
+            <span class="kpi-sub <?= amount_class($endSaldo) ?>">Prognose Monatsende ≈ <?= fmt_eur($endSaldo, true) ?></span>
+        <?php endif; ?>
         <span class="kpi-sub"><?= number_format($totals['n'], 0, ',', '.') ?> Umsätze · <?= $f['konto'] === '' ? 'Überträge zwischen Konten ausgeblendet' : 'inkl. Überträge' ?></span>
     </div>
     <?php if ($totals['gespart'] !== null): ?>

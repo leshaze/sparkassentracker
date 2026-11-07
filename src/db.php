@@ -71,6 +71,8 @@ function db(): PDO
         'kategorie_manuell'  => 'INTEGER DEFAULT 0',
         'uebertrag_gesperrt' => 'INTEGER DEFAULT 0',
         'notiz'              => 'TEXT',
+        // Kreditkarte: Datum der Abrechnung, ab dem die Zahlung das Konto wirklich belastet
+        'wirksam_am'         => 'TEXT',
     ];
     foreach ($extra as $col => $type) {
         if (!in_array($col, $cols, true)) {
@@ -161,6 +163,56 @@ function set_spar_kategorie(string $cat, bool $on): void
         $list[] = $cat;
     }
     setting_set('spar_kategorien', $list);
+}
+
+/**
+ * Konten, die gesammelt abgerechnet werden (Kreditkarte): ihre Zahlungen zählen in den
+ * Auswertungen erst zum Datum der Abrechnung (wirksam_am), nicht zum Kaufdatum.
+ */
+function abrechnungskonten(): array
+{
+    $v = setting_get('abrechnungskonten');
+    return is_array($v) ? array_values(array_filter($v, 'is_string')) : [];
+}
+
+function set_abrechnungskonto(string $konto, bool $on): void
+{
+    $list = array_values(array_diff(abrechnungskonten(), [$konto]));
+    if ($on && in_array($konto, konten(), true)) {
+        $list[] = $konto;
+    }
+    setting_set('abrechnungskonten', $list);
+}
+
+/**
+ * Wirksam-Datum für Abrechnungskonten neu berechnen: jede Zahlung zählt zum Tag der nächsten
+ * Abrechnung auf diesem Konto (eingehender Übertrag, z. B. Ausgleich vom Giro). Zahlungen
+ * nach der letzten Abrechnung sind offen: geschätzt einen Monat nach der letzten Abrechnung.
+ */
+function update_effective_dates(): void
+{
+    $pdo = db();
+    $pdo->beginTransaction();
+    $pdo->exec('UPDATE transactions SET wirksam_am = NULL WHERE wirksam_am IS NOT NULL');
+    $st = $pdo->prepare('UPDATE transactions SET wirksam_am = ? WHERE hash = ?');
+    foreach (abrechnungskonten() as $konto) {
+        $settle = array_column(db_all("SELECT substr(datum,1,10) AS d FROM transactions
+            WHERE konto = ? AND ist_uebertrag = 1 AND betrag > 0 ORDER BY d", [$konto]), 'd');
+        if (!$settle) {
+            continue;   // noch keine Abrechnung erkannt → Kaufdatum
+        }
+        $nextEst = (new DateTimeImmutable(end($settle)))->modify('+1 month')->format('Y-m-d');
+        $rows = db_all("SELECT hash, substr(datum,1,10) AS d FROM transactions
+            WHERE konto = ? AND ist_uebertrag = 0 ORDER BY d", [$konto]);
+        $i = 0;
+        foreach ($rows as $r) {
+            while ($i < count($settle) && $settle[$i] < $r['d']) {
+                $i++;
+            }
+            $st->execute([$settle[$i] ?? $nextEst, $r['hash']]);
+        }
+    }
+    $pdo->commit();
 }
 
 function konten(): array

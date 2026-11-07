@@ -13,6 +13,11 @@ z. B. `http://recordloom.local/tracker/`, und nutzt dessen PHP-FPM mit.
   Verwendungszweck und Buchungstext; Kombi-Regeln wie `paypal + steam` greifen nur, wenn alle
   Teile vorkommen, und haben Vorrang (z. B. für PayPal-Zahlungen an verschiedene Händler)
 - Übertragserkennung zwischen eigenen Konten (Fenster 14 Tage, `config.php`)
+- Kreditkarte „erst bei Abrechnung“ (Haken unter *Import → Konten*): Kartenzahlungen zählen in
+  Übersicht, Prognose und Auswertungen erst zum Tag der Abrechnung; offene Zahlungen stehen in
+  der Prognose als anstehende Abrechnung (mindestens der übliche Monatsbetrag)
+- Laufender Monat: Kacheln und Monatsverlauf zeigen zusätzlich, was bis Monatsende an Einnahmen
+  und Ausgaben noch erwartet wird, und den prognostizierten Saldo zum Monatsende
 - Konto- und Zeitraumfilter, Kategorie-Auswertung mit Unterkategorien, Monatsverlauf
 - Spar-Kategorien (auf der Kategorien-Seite per Haken „Zählt als Sparen“, standardmäßig keine):
   z. B. Einzahlungen aufs Tagesgeld zählen nicht als Ausgabe, Entnahmen nicht als Einnahme. Die
